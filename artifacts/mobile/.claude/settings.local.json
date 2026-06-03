@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npx chromium-cli *)",
+      "Bash(npx playwright *)",
+      "Bash(npm install *)",
+      "Bash(curl -s 'http://localhost:8081/index.bundle?platform=web')",
+      "Bash(npx expo *)",
+      "Bash(curl -s http://localhost:8081)",
+      "Read(//Users/Jit/git/myagent/**)",
+      "Bash(pnpm add *)",
+      "Bash(node *)"
+    ]
+  }
+}

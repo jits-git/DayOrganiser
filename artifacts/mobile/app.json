@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Day Organizer",
+    "slug": "mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "mobile",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F5F7FF"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Allow Day Organizer to use the microphone for voice task input.",
+        "NSSpeechRecognitionUsageDescription": "Allow Day Organizer to use speech recognition to create tasks by voice."
+      }
+    },
+    "android": {
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://replit.com/"
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "sounds": []
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Day Organizer to use the microphone for voice task input.",
+          "speechRecognitionPermission": "Allow Day Organizer to use speech recognition to create tasks by voice."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "3617468b-6cc4-4693-894f-f0c03a89597f"
+      }
+    }
+  }
+}
