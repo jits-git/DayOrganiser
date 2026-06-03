@@ -23,7 +23,8 @@
     "android": {
       "permissions": [
         "android.permission.RECORD_AUDIO"
-      ]
+      ],
+      "package": "com.jitsassistant.mobile"
     },
     "web": {
       "favicon": "./assets/images/icon.png"

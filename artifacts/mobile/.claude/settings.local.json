@@ -10,7 +10,10 @@
       "Bash(curl -s http://localhost:8081)",
       "Read(//Users/Jit/git/myagent/**)",
       "Bash(pnpm add *)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
