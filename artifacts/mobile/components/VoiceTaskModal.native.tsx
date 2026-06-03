@@ -1,23 +1,27 @@
-/**
- * Native implementation: smart natural-language text input powered by chrono-node.
- * expo-speech-recognition requires a dev build and is not available in Expo Go,
- * so we degrade gracefully to typed NLP input — same parsing magic, no native module.
- */
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
 import {
-  KeyboardAvoidingView,
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from "expo-speech-recognition";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  Alert,
   Modal,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import Animated, {
+  Easing,
+  FadeIn,
   FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -34,7 +38,7 @@ interface VoiceTaskModalProps {
   onConfirm: (parsed: ParsedVoiceInput) => void;
 }
 
-type Phase = "input" | "review";
+type Phase = "idle" | "listening" | "review";
 
 export function VoiceTaskModal({
   visible,
@@ -43,36 +47,102 @@ export function VoiceTaskModal({
 }: VoiceTaskModalProps) {
   const c = useColors();
   const insets = useSafeAreaInsets();
-  const [phase, setPhase] = useState<Phase>("input");
-  const [text, setText] = useState("");
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [transcript, setTranscript] = useState("");
   const [parsed, setParsed] = useState<ParsedVoiceInput | null>(null);
-  const [error, setError] = useState("");
+  const transcriptRef = useRef("");
+
+  const ringScale = useSharedValue(1);
+  const ringOpacity = useSharedValue(0);
+  const micScale = useSharedValue(1);
+
+  useEffect(() => {
+    if (phase === "listening") {
+      ringOpacity.value = withTiming(0.35);
+      ringScale.value = withRepeat(
+        withSequence(
+          withTiming(1.9, { duration: 900, easing: Easing.out(Easing.quad) }),
+          withTiming(1, { duration: 900, easing: Easing.in(Easing.quad) })
+        ),
+        -1,
+        false
+      );
+      micScale.value = withRepeat(
+        withSequence(withTiming(1.06, { duration: 600 }), withTiming(1, { duration: 600 })),
+        -1,
+        false
+      );
+    } else {
+      ringOpacity.value = withTiming(0);
+      ringScale.value = withTiming(1);
+      micScale.value = withTiming(1);
+    }
+  }, [phase]);
 
   useEffect(() => {
     if (!visible) {
-      setPhase("input");
-      setText("");
+      ExpoSpeechRecognitionModule.abort();
+      setPhase("idle");
+      setTranscript("");
       setParsed(null);
-      setError("");
+      transcriptRef.current = "";
     }
   }, [visible]);
 
-  function handleParse() {
-    const trimmed = text.trim();
-    if (!trimmed) {
-      setError("Please describe your task first.");
+  useSpeechRecognitionEvent("result", (event) => {
+    const text = event.results[0]?.transcript ?? "";
+    setTranscript(text);
+    transcriptRef.current = text;
+  });
+
+  useSpeechRecognitionEvent("end", () => {
+    const text = transcriptRef.current;
+    if (text.trim()) {
+      const result = parseVoiceTranscript(text);
+      setParsed(result);
+      setPhase("review");
+    } else {
+      setPhase("idle");
+    }
+  });
+
+  useSpeechRecognitionEvent("error", () => {
+    setPhase("idle");
+  });
+
+  const ringStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: ringScale.value }],
+    opacity: ringOpacity.value,
+  }));
+
+  const micStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: micScale.value }],
+  }));
+
+  async function startListening() {
+    const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!granted) {
+      Alert.alert(
+        "Microphone permission required",
+        "Please allow microphone access in Settings to use voice input."
+      );
       return;
     }
-    setError("");
-    const result = parseVoiceTranscript(trimmed);
-    setParsed(result);
-    setPhase("review");
+    transcriptRef.current = "";
+    setTranscript("");
+    setPhase("listening");
+    ExpoSpeechRecognitionModule.start({ lang: "en-US", interimResults: true });
+  }
+
+  function handleStop() {
+    ExpoSpeechRecognitionModule.stop();
   }
 
   function handleRetry() {
-    setPhase("input");
+    setPhase("idle");
+    setTranscript("");
     setParsed(null);
-    setError("");
+    transcriptRef.current = "";
   }
 
   function handleConfirm() {
@@ -90,11 +160,7 @@ export function VoiceTaskModal({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <KeyboardAvoidingView
-        style={[styles.container, { backgroundColor: c.background }]}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
-      >
+      <View style={[styles.container, { backgroundColor: c.background }]}>
         <View
           style={[
             styles.header,
@@ -113,43 +179,29 @@ export function VoiceTaskModal({
               { color: c.foreground, fontFamily: "Inter_600SemiBold" },
             ]}
           >
-            Smart Task Input
+            Voice Task
           </Text>
           <View style={{ width: 22 }} />
         </View>
 
-        <ScrollView
-          style={styles.body}
-          contentContainerStyle={styles.bodyContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {phase === "input" && (
-            <View style={styles.phaseContainer}>
-              <View
-                style={[
-                  styles.iconCircle,
-                  { backgroundColor: c.primary + "18", borderRadius: 40 },
-                ]}
-              >
-                <Feather name="edit-3" size={28} color={c.primary} />
-              </View>
-
+        <View style={styles.body}>
+          {phase === "idle" && (
+            <Animated.View entering={FadeIn} style={styles.phaseContainer}>
               <Text
                 style={[
-                  styles.title,
+                  styles.hintTitle,
                   { color: c.foreground, fontFamily: "Inter_600SemiBold" },
                 ]}
               >
-                Describe your task
+                Speak your task
               </Text>
               <Text
                 style={[
-                  styles.subtitle,
+                  styles.hintSub,
                   { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
                 ]}
               >
-                Include the date and time naturally — we'll extract them for you.
+                Include the date and time naturally.
               </Text>
 
               <View
@@ -165,63 +217,107 @@ export function VoiceTaskModal({
                   ]}
                 >
                   "Submit the report{" "}
-                  <Text style={{ color: c.primary }}>tomorrow at 3pm</Text>
-                  , deadline{" "}
+                  <Text style={{ color: c.primary }}>tomorrow at 3pm</Text>,
+                  deadline{" "}
                   <Text style={{ color: c.destructive }}>Friday at 5pm</Text>"
                 </Text>
               </View>
 
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: c.card,
-                    borderColor: error ? c.destructive : c.border,
-                    color: c.foreground,
-                    fontFamily: "Inter_400Regular",
-                    borderRadius: c.radius,
-                  },
-                ]}
-                placeholder="E.g. Call the dentist next Friday at 10am..."
-                placeholderTextColor={c.mutedForeground}
-                value={text}
-                onChangeText={(t) => { setText(t); setError(""); }}
-                multiline
-                numberOfLines={3}
-                autoFocus
-                returnKeyType="done"
-              />
-
-              {!!error && (
-                <Text
-                  style={[
-                    styles.errorText,
-                    { color: c.destructive, fontFamily: "Inter_400Regular" },
-                  ]}
-                >
-                  {error}
-                </Text>
-              )}
-
-              <TouchableOpacity
-                onPress={handleParse}
-                style={[
-                  styles.parseBtn,
-                  { backgroundColor: c.primary, borderRadius: c.radius },
-                ]}
-                activeOpacity={0.85}
-              >
-                <Feather name="zap" size={16} color={c.primaryForeground} />
-                <Text
-                  style={[
-                    styles.parseBtnText,
-                    { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" },
-                  ]}
-                >
-                  Parse & Preview
-                </Text>
+              <TouchableOpacity onPress={startListening} activeOpacity={0.85}>
+                <View style={styles.micWrapper}>
+                  <Animated.View
+                    style={[
+                      styles.micRing,
+                      { backgroundColor: c.primary },
+                      ringStyle,
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.micButton,
+                      { backgroundColor: c.primary },
+                      micStyle,
+                    ]}
+                  >
+                    <Feather name="mic" size={34} color={c.primaryForeground} />
+                  </Animated.View>
+                </View>
               </TouchableOpacity>
-            </View>
+
+              <Text
+                style={[
+                  styles.tapLabel,
+                  { color: c.mutedForeground, fontFamily: "Inter_500Medium" },
+                ]}
+              >
+                Tap to speak
+              </Text>
+            </Animated.View>
+          )}
+
+          {phase === "listening" && (
+            <Animated.View entering={FadeIn} style={styles.phaseContainer}>
+              <Text
+                style={[
+                  styles.hintTitle,
+                  { color: c.destructive, fontFamily: "Inter_600SemiBold" },
+                ]}
+              >
+                Listening...
+              </Text>
+
+              <TouchableOpacity onPress={handleStop} activeOpacity={0.85}>
+                <View style={styles.micWrapper}>
+                  <Animated.View
+                    style={[
+                      styles.micRing,
+                      { backgroundColor: c.destructive },
+                      ringStyle,
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      styles.micButton,
+                      { backgroundColor: c.destructive },
+                      micStyle,
+                    ]}
+                  >
+                    <Feather name="mic" size={34} color="#fff" />
+                  </Animated.View>
+                </View>
+              </TouchableOpacity>
+
+              <Text
+                style={[
+                  styles.tapLabel,
+                  { color: c.mutedForeground, fontFamily: "Inter_500Medium" },
+                ]}
+              >
+                Tap to stop
+              </Text>
+
+              {!!transcript && (
+                <View
+                  style={[
+                    styles.transcriptBox,
+                    {
+                      backgroundColor: c.card,
+                      borderColor: c.border,
+                      borderRadius: c.radius,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.transcriptText,
+                      { color: c.foreground, fontFamily: "Inter_400Regular" },
+                    ]}
+                  >
+                    {transcript}
+                  </Text>
+                </View>
+              )}
+            </Animated.View>
           )}
 
           {phase === "review" && parsed && (
@@ -231,16 +327,16 @@ export function VoiceTaskModal({
             >
               <View
                 style={[
-                  styles.iconCircle,
-                  { backgroundColor: c.primary + "18", borderRadius: 40 },
+                  styles.successIcon,
+                  { backgroundColor: c.primary + "20", borderRadius: 36 },
                 ]}
               >
-                <Feather name="check-circle" size={28} color={c.primary} />
+                <Feather name="check-circle" size={32} color={c.primary} />
               </View>
 
               <Text
                 style={[
-                  styles.title,
+                  styles.hintTitle,
                   { color: c.foreground, fontFamily: "Inter_600SemiBold" },
                 ]}
               >
@@ -272,14 +368,14 @@ export function VoiceTaskModal({
 
               <Text
                 style={[
-                  styles.note,
+                  styles.reviewNote,
                   { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
                 ]}
               >
                 You can adjust any details after creating the task.
               </Text>
 
-              <View style={styles.actionRow}>
+              <View style={styles.reviewButtons}>
                 <TouchableOpacity
                   onPress={handleRetry}
                   style={[
@@ -287,14 +383,14 @@ export function VoiceTaskModal({
                     { borderColor: c.border, borderRadius: c.radius },
                   ]}
                 >
-                  <Feather name="edit-2" size={15} color={c.foreground} />
+                  <Feather name="refresh-cw" size={16} color={c.foreground} />
                   <Text
                     style={[
                       styles.retryText,
                       { color: c.foreground, fontFamily: "Inter_500Medium" },
                     ]}
                   >
-                    Edit
+                    Try again
                   </Text>
                 </TouchableOpacity>
 
@@ -305,7 +401,7 @@ export function VoiceTaskModal({
                     { backgroundColor: c.primary, borderRadius: c.radius },
                   ]}
                 >
-                  <Feather name="plus" size={15} color={c.primaryForeground} />
+                  <Feather name="plus" size={16} color={c.primaryForeground} />
                   <Text
                     style={[
                       styles.confirmText,
@@ -318,8 +414,8 @@ export function VoiceTaskModal({
               </View>
             </Animated.View>
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -348,15 +444,11 @@ function ReviewRow({
         },
       ]}
     >
-      <Feather
-        name={icon as any}
-        size={16}
-        color={accent ?? colors.mutedForeground}
-      />
+      <Feather name={icon as any} size={16} color={accent ?? colors.mutedForeground} />
       <View style={styles.reviewRowText}>
         <Text
           style={[
-            styles.reviewLabel,
+            styles.reviewRowLabel,
             { color: colors.mutedForeground, fontFamily: "Inter_400Regular" },
           ]}
         >
@@ -364,7 +456,7 @@ function ReviewRow({
         </Text>
         <Text
           style={[
-            styles.reviewValue,
+            styles.reviewRowValue,
             { color: colors.foreground, fontFamily: "Inter_600SemiBold" },
           ]}
         >
@@ -386,48 +478,61 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 16 },
-  body: { flex: 1 },
-  bodyContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingVertical: 24,
-  },
+  body: { flex: 1, justifyContent: "center" },
   phaseContainer: {
     alignItems: "center",
     paddingHorizontal: 24,
-    gap: 14,
+    gap: 16,
   },
-  iconCircle: {
+  hintTitle: { fontSize: 22, textAlign: "center" },
+  hintSub: { fontSize: 14, textAlign: "center", marginTop: -8 },
+  exampleBox: {
+    padding: 16,
+    width: "100%",
+    marginBottom: 8,
+  },
+  exampleText: { fontSize: 15, textAlign: "center", lineHeight: 22 },
+  micWrapper: {
+    width: 120,
+    height: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    marginVertical: 8,
+  },
+  micRing: {
+    position: "absolute",
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+  },
+  micButton: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  tapLabel: { fontSize: 14, marginTop: -4 },
+  transcriptBox: {
+    width: "100%",
+    padding: 16,
+    borderWidth: 1,
+    minHeight: 72,
+    marginTop: 8,
+  },
+  transcriptText: { fontSize: 16, lineHeight: 24, textAlign: "center" },
+  successIcon: {
     width: 72,
     height: 72,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,
   },
-  title: { fontSize: 22, textAlign: "center" },
-  subtitle: { fontSize: 14, textAlign: "center", marginTop: -6 },
-  exampleBox: { padding: 14, width: "100%" },
-  exampleText: { fontSize: 14, textAlign: "center", lineHeight: 22 },
-  input: {
-    width: "100%",
-    borderWidth: 1,
-    padding: 14,
-    fontSize: 16,
-    lineHeight: 24,
-    minHeight: 90,
-    textAlignVertical: "top",
-  },
-  errorText: { fontSize: 13, marginTop: -6 },
-  parseBtn: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 15,
-    marginTop: 4,
-  },
-  parseBtnText: { fontSize: 16 },
   reviewCards: { width: "100%", gap: 8 },
   reviewRow: {
     flexDirection: "row",
@@ -437,10 +542,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   reviewRowText: { flex: 1, gap: 2 },
-  reviewLabel: { fontSize: 11, letterSpacing: 0.5 },
-  reviewValue: { fontSize: 15 },
-  note: { fontSize: 13, textAlign: "center", marginTop: -2 },
-  actionRow: { flexDirection: "row", gap: 12, width: "100%", marginTop: 4 },
+  reviewRowLabel: { fontSize: 11, letterSpacing: 0.5 },
+  reviewRowValue: { fontSize: 15 },
+  reviewNote: { fontSize: 13, textAlign: "center", marginTop: -4 },
+  reviewButtons: { flexDirection: "row", gap: 12, width: "100%", marginTop: 8 },
   retryBtn: {
     flex: 1,
     flexDirection: "row",
