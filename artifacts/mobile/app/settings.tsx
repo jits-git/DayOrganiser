@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useColors } from "@/hooks/useColors";
 import { useSettings } from "@/context/SettingsContext";
+import { triggerAnnouncement } from "@/hooks/useVoiceAnnouncement";
 
 function formatTime(hour: number, minute: number): string {
   const d = new Date();
@@ -31,6 +32,7 @@ export default function SettingsScreen() {
   const { settings, updateSettings } = useSettings();
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [localUserName, setLocalUserName] = useState(settings.userName);
   const [localAssistantName, setLocalAssistantName] = useState(
     settings.assistantName || "Kate"
@@ -469,6 +471,30 @@ export default function SettingsScreen() {
           />
         </View>
 
+        {/* DEBUG — remove before release */}
+        <TouchableOpacity
+          onPress={async () => {
+            setIsSpeaking(true);
+            await triggerAnnouncement("morning");
+            setIsSpeaking(false);
+          }}
+          disabled={isSpeaking}
+          activeOpacity={0.75}
+          style={[
+            styles.debugBtn,
+            {
+              borderColor: c.accent,
+              borderRadius: c.radius,
+              opacity: isSpeaking ? 0.5 : 1,
+            },
+          ]}
+        >
+          <Feather name="play-circle" size={18} color={c.accent} />
+          <Text style={[styles.debugBtnText, { color: c.accent, fontFamily: "Inter_500Medium" }]}>
+            {isSpeaking ? "Speaking…" : "Test Morning Announcement"}
+          </Text>
+        </TouchableOpacity>
+
         <Text
           style={[
             styles.footerNote,
@@ -564,4 +590,15 @@ const styles = StyleSheet.create({
   },
   chip: { paddingHorizontal: 12, paddingVertical: 6 },
   chipText: { fontSize: 12 },
+  debugBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    paddingVertical: 13,
+    marginTop: 20,
+  },
+  debugBtnText: { fontSize: 14 },
 });
