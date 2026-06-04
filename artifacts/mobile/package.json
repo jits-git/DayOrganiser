@@ -63,7 +63,7 @@
     "expo": "~54.0.35",
     "expo-dev-client": "~6.0.21",
     "expo-notifications": "^0.32.17",
-    "expo-speech": "^56.0.3",
+    "expo-speech": "^55.0.14",
     "expo-speech-recognition": "^56.0.0",
     "react": "19.1.0",
     "react-native": "0.81.5"
