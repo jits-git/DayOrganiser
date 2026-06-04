@@ -14,8 +14,10 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { SettingsProvider } from "@/context/SettingsContext";
+import { OnboardingModal } from "@/components/OnboardingModal";
+import { SettingsProvider, useSettings } from "@/context/SettingsContext";
 import { TaskProvider } from "@/context/TaskContext";
+import { useVoiceAnnouncement } from "@/hooks/useVoiceAnnouncement";
 import {
   requestNotificationPermissions,
   scheduleDailyReminders,
@@ -34,18 +36,23 @@ async function setupNotifications() {
 
 setupNotifications();
 
-function RootLayoutNav() {
+function AppShell() {
+  const { settings, isSettingsLoaded } = useSettings();
+  useVoiceAnnouncement();
   return (
-    <Stack>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="settings"
-        options={{
-          headerShown: false,
-          presentation: "modal",
-        }}
-      />
-    </Stack>
+    <>
+      <Stack>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="settings"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+          }}
+        />
+      </Stack>
+      <OnboardingModal visible={isSettingsLoaded && !settings.onboardingComplete} />
+    </>
   );
 }
 
@@ -73,7 +80,7 @@ export default function RootLayout() {
             <KeyboardProvider>
               <SettingsProvider>
                 <TaskProvider>
-                  <RootLayoutNav />
+                  <AppShell />
                 </TaskProvider>
               </SettingsProvider>
             </KeyboardProvider>

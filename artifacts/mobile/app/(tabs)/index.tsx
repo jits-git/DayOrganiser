@@ -15,10 +15,17 @@ import { OverduePromptManager } from "@/components/OverdueModal";
 import { TaskCard } from "@/components/TaskCard";
 import { TaskModal } from "@/components/TaskModal";
 import { VoiceTaskModal } from "@/components/VoiceTaskModal";
+import { useSettings } from "@/context/SettingsContext";
 import { useTasks } from "@/context/TaskContext";
 import { useColors } from "@/hooks/useColors";
 import { ParsedVoiceInput } from "@/utils/parseVoice";
 import { Task } from "@/types/task";
+
+function getGreeting(hour: number, name: string): string {
+  if (!name) return "Today";
+  const period = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+  return `Good ${period}, ${name}!`;
+}
 
 function isSameDay(a: Date, b: Date) {
   return (
@@ -88,6 +95,7 @@ export default function TodayScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const { tasks, completeTask } = useTasks();
+  const { settings } = useSettings();
 
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -101,6 +109,8 @@ export default function TodayScreen() {
     month: "long",
     day: "numeric",
   });
+
+  const title = getGreeting(now.getHours(), settings.userName);
 
   const { overdueToday, activeToday, completedToday, weekDays, weekTasksMap, comingDates, comingTasksMap } =
     useMemo(() => {
@@ -206,8 +216,12 @@ export default function TodayScreen() {
           <Text style={[styles.dateLabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
             {todayDate}
           </Text>
-          <Text style={[styles.title, { color: c.foreground, fontFamily: "Inter_700Bold" }]}>
-            Today
+          <Text
+            style={[styles.title, { color: c.foreground, fontFamily: "Inter_700Bold" }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
+            {title}
           </Text>
         </View>
         <View style={styles.headerActions}>

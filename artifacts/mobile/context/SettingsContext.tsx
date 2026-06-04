@@ -14,6 +14,7 @@ const STORAGE_KEY = "@dayorganizer/settings";
 
 interface SettingsContextType {
   settings: AppSettings;
+  isSettingsLoaded: boolean;
   updateSettings: (s: Partial<AppSettings>) => Promise<void>;
 }
 
@@ -21,10 +22,16 @@ const SettingsContext = createContext<SettingsContextType | null>(null);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then((stored) => {
-      if (stored) setSettings(JSON.parse(stored));
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Migration: existing users who already have stored settings skip onboarding
+        setSettings({ ...DEFAULT_SETTINGS, onboardingComplete: true, ...parsed });
+      }
+      setIsSettingsLoaded(true);
     });
   }, []);
 
@@ -43,7 +50,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <SettingsContext.Provider value={{ settings, updateSettings }}>
+    <SettingsContext.Provider value={{ settings, isSettingsLoaded, updateSettings }}>
       {children}
     </SettingsContext.Provider>
   );

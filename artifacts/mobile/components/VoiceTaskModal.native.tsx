@@ -15,8 +15,6 @@ import {
 } from "react-native";
 import Animated, {
   Easing,
-  FadeIn,
-  FadeInDown,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -52,6 +50,8 @@ export function VoiceTaskModal({
   const [parsed, setParsed] = useState<ParsedVoiceInput | null>(null);
   const transcriptRef = useRef("");
 
+  const isListeningRef = useRef(false);
+
   const ringScale = useSharedValue(1);
   const ringOpacity = useSharedValue(0);
   const micScale = useSharedValue(1);
@@ -81,6 +81,7 @@ export function VoiceTaskModal({
 
   useEffect(() => {
     if (!visible) {
+      isListeningRef.current = false;
       ExpoSpeechRecognitionModule.abort();
       setPhase("idle");
       setTranscript("");
@@ -90,23 +91,30 @@ export function VoiceTaskModal({
   }, [visible]);
 
   useSpeechRecognitionEvent("result", (event) => {
-    const text = event.results[0]?.transcript ?? "";
+    const text = event.results?.[0]?.transcript ?? "";
     setTranscript(text);
     transcriptRef.current = text;
   });
 
   useSpeechRecognitionEvent("end", () => {
+    if (!isListeningRef.current) return;
+    isListeningRef.current = false;
     const text = transcriptRef.current;
     if (text.trim()) {
-      const result = parseVoiceTranscript(text);
-      setParsed(result);
-      setPhase("review");
+      try {
+        const result = parseVoiceTranscript(text);
+        setParsed(result);
+        setPhase("review");
+      } catch {
+        setPhase("idle");
+      }
     } else {
       setPhase("idle");
     }
   });
 
   useSpeechRecognitionEvent("error", () => {
+    isListeningRef.current = false;
     setPhase("idle");
   });
 
@@ -130,6 +138,7 @@ export function VoiceTaskModal({
     }
     transcriptRef.current = "";
     setTranscript("");
+    isListeningRef.current = true;
     setPhase("listening");
     ExpoSpeechRecognitionModule.start({ lang: "en-US", interimResults: true });
   }
@@ -186,7 +195,7 @@ export function VoiceTaskModal({
 
         <View style={styles.body}>
           {phase === "idle" && (
-            <Animated.View entering={FadeIn} style={styles.phaseContainer}>
+            <View style={styles.phaseContainer}>
               <Text
                 style={[
                   styles.hintTitle,
@@ -252,11 +261,11 @@ export function VoiceTaskModal({
               >
                 Tap to speak
               </Text>
-            </Animated.View>
+            </View>
           )}
 
           {phase === "listening" && (
-            <Animated.View entering={FadeIn} style={styles.phaseContainer}>
+            <View style={styles.phaseContainer}>
               <Text
                 style={[
                   styles.hintTitle,
@@ -317,14 +326,11 @@ export function VoiceTaskModal({
                   </Text>
                 </View>
               )}
-            </Animated.View>
+            </View>
           )}
 
           {phase === "review" && parsed && (
-            <Animated.View
-              entering={FadeInDown.duration(300)}
-              style={styles.phaseContainer}
-            >
+            <View style={styles.phaseContainer}>
               <View
                 style={[
                   styles.successIcon,
@@ -412,7 +418,7 @@ export function VoiceTaskModal({
                   </Text>
                 </TouchableOpacity>
               </View>
-            </Animated.View>
+            </View>
           )}
         </View>
       </View>

@@ -8,6 +8,10 @@ export interface AppSettings {
   afternoonNotification: NotificationTime;
   eveningNotification: NotificationTime;
   hardDeadlineOffsetDays: number;
+  userName: string;
+  assistantName: string;
+  onboardingComplete: boolean;
+  voiceAnnouncementsEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -15,4 +19,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   afternoonNotification: { hour: 13, minute: 0 },
   eveningNotification: { hour: 22, minute: 0 },
   hardDeadlineOffsetDays: 0,
+  userName: "",
+  assistantName: "Kate",
+  onboardingComplete: false,
+  voiceAnnouncementsEnabled: false,
 };

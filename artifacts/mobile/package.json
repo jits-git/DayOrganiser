@@ -7,7 +7,9 @@
     "dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -58,8 +60,12 @@
   "dependencies": {
     "@react-native-community/datetimepicker": "^8.4.4",
     "chrono-node": "^2.9.1",
+    "expo": "~54.0.35",
     "expo-dev-client": "~6.0.21",
     "expo-notifications": "^0.32.17",
-    "expo-speech-recognition": "^56.0.0"
+    "expo-speech": "^56.0.3",
+    "expo-speech-recognition": "^56.0.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   }
 }

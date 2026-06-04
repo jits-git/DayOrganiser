@@ -1,12 +1,14 @@
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -29,6 +31,15 @@ export default function SettingsScreen() {
   const { settings, updateSettings } = useSettings();
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
+  const [localUserName, setLocalUserName] = useState(settings.userName);
+  const [localAssistantName, setLocalAssistantName] = useState(
+    settings.assistantName || "Kate"
+  );
+
+  useEffect(() => {
+    setLocalUserName(settings.userName);
+    setLocalAssistantName(settings.assistantName || "Kate");
+  }, [settings.userName, settings.assistantName]);
 
   const topInset = Platform.OS === "web" ? 0 : insets.top;
   const bottomInset = Platform.OS === "web" ? 34 : insets.bottom;
@@ -315,6 +326,151 @@ export default function SettingsScreen() {
 
         <Text
           style={[
+            styles.sectionLabel,
+            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
+          ]}
+        >
+          PERSONAL
+        </Text>
+
+        {[
+          {
+            icon: "user",
+            label: "Your Name",
+            value: localUserName,
+            placeholder: "Enter your name",
+            onChange: setLocalUserName,
+            onBlur: () => {
+              if (localUserName !== settings.userName) {
+                updateSettings({ userName: localUserName });
+              }
+            },
+          },
+          {
+            icon: "message-circle",
+            label: "Assistant Name",
+            value: localAssistantName,
+            placeholder: "Kate",
+            onChange: setLocalAssistantName,
+            onBlur: () => {
+              if (localAssistantName !== settings.assistantName) {
+                updateSettings({ assistantName: localAssistantName || "Kate" });
+              }
+            },
+          },
+        ].map((field, idx, arr) => (
+          <View key={field.label}>
+            <View
+              style={[
+                styles.row,
+                styles.nameRow,
+                {
+                  backgroundColor: c.card,
+                  borderColor: c.border,
+                  borderRadius: c.radius,
+                  borderTopLeftRadius: idx === 0 ? c.radius : 0,
+                  borderTopRightRadius: idx === 0 ? c.radius : 0,
+                  borderBottomLeftRadius: idx === arr.length - 1 ? c.radius : 0,
+                  borderBottomRightRadius: idx === arr.length - 1 ? c.radius : 0,
+                  borderBottomWidth: idx < arr.length - 1 ? 0 : 1,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.iconWrap,
+                  { backgroundColor: c.primary + "18", borderRadius: 10 },
+                ]}
+              >
+                <Feather name={field.icon as any} size={18} color={c.primary} />
+              </View>
+              <Text
+                style={[
+                  styles.rowLabel,
+                  { color: c.foreground, fontFamily: "Inter_500Medium", flex: 0, minWidth: 120 },
+                ]}
+              >
+                {field.label}
+              </Text>
+              <TextInput
+                style={[
+                  styles.nameInput,
+                  {
+                    color: c.foreground,
+                    fontFamily: "Inter_400Regular",
+                    borderColor: c.border,
+                    borderRadius: 8,
+                    backgroundColor: c.secondary,
+                  },
+                ]}
+                value={field.value}
+                onChangeText={field.onChange}
+                onBlur={field.onBlur}
+                placeholder={field.placeholder}
+                placeholderTextColor={c.mutedForeground}
+                autoCapitalize="words"
+                returnKeyType="done"
+              />
+            </View>
+            {idx < arr.length - 1 && (
+              <View style={[styles.separator, { backgroundColor: c.border }]} />
+            )}
+          </View>
+        ))}
+
+        <Text
+          style={[
+            styles.sectionLabel,
+            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
+          ]}
+        >
+          FEATURES
+        </Text>
+
+        <View
+          style={[
+            styles.row,
+            {
+              backgroundColor: c.card,
+              borderColor: c.border,
+              borderRadius: c.radius,
+              borderWidth: 1,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.iconWrap,
+              { backgroundColor: c.primary + "18", borderRadius: 10 },
+            ]}
+          >
+            <Feather name="volume-2" size={18} color={c.primary} />
+          </View>
+          <View style={styles.rowText}>
+            <Text
+              style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}
+            >
+              Voice Announcements
+            </Text>
+            <Text
+              style={[
+                styles.rowSublabel,
+                { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
+              ]}
+            >
+              Read a summary aloud when opening from a daily notification
+            </Text>
+          </View>
+          <Switch
+            value={settings.voiceAnnouncementsEnabled ?? false}
+            onValueChange={(v) => updateSettings({ voiceAnnouncementsEnabled: v })}
+            trackColor={{ false: c.border, true: c.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        <Text
+          style={[
             styles.footerNote,
             { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
           ]}
@@ -385,6 +541,18 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 24,
     textAlign: "center",
+  },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  nameInput: {
+    flex: 1,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 14,
+    textAlign: "right",
   },
   chipRow: {
     flexDirection: "row",

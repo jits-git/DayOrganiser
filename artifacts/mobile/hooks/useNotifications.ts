@@ -41,9 +41,9 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   }
 }
 
-const DAILY_MORNING_ID = "daily-morning";
-const DAILY_MIDDAY_ID = "daily-midday";
-const DAILY_EVENING_ID = "daily-evening";
+export const DAILY_MORNING_ID = "daily-morning";
+export const DAILY_MIDDAY_ID = "daily-midday";
+export const DAILY_EVENING_ID = "daily-evening";
 
 interface DailyTimes {
   morning?: { hour: number; minute: number };
