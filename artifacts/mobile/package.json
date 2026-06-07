@@ -61,6 +61,7 @@
     "chrono-node": "^2.9.1",
     "expo": "~54.0.35",
     "@react-native-google-signin/google-signin": "^16.1.2",
+    "expo-secure-store": "~14.0.0",
     "expo-crypto": "~15.0.9",
     "expo-dev-client": "~6.0.21",
     "expo-notifications": "^0.32.17",

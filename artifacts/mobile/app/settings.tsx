@@ -1,6 +1,7 @@
 import DateTimePicker from "@react-native-community/datetimepicker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
+import * as SecureStore from "expo-secure-store";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -21,6 +22,8 @@ import { useSettings } from "@/context/SettingsContext";
 import { useGoogleAuth } from "@/context/GoogleAuthContext";
 import { triggerAnnouncement } from "@/hooks/useVoiceAnnouncement";
 import { backupToDrive, restoreFromDrive } from "@/utils/googleDrive";
+import { AIProvider } from "@/types/settings";
+import { PROVIDER_MODELS, DEFAULT_MODEL } from "@/utils/aiProvider";
 
 const TASKS_KEY = "@dayorganizer/tasks";
 const SETTINGS_KEY = "@dayorganizer/settings";
@@ -58,11 +61,21 @@ export default function SettingsScreen() {
   );
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [localApiKey, setLocalApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+
+  const activeProvider: AIProvider = settings.aiProvider ?? "claude";
 
   useEffect(() => {
     setLocalUserName(settings.userName);
     setLocalAssistantName(settings.assistantName || "Kate");
   }, [settings.userName, settings.assistantName]);
+
+  useEffect(() => {
+    SecureStore.getItemAsync(`popo_apikey_${activeProvider}`).then((key) => {
+      setLocalApiKey(key ?? "");
+    });
+  }, [activeProvider]);
 
   const topInset = Platform.OS === "web" ? 0 : insets.top;
   const bottomInset = Platform.OS === "web" ? 34 : insets.bottom;
@@ -586,6 +599,184 @@ export default function SettingsScreen() {
             {isSpeaking ? "Speaking…" : "Test Morning Announcement"}
           </Text>
         </TouchableOpacity>
+
+        {/* ── AI Assistant ── */}
+        <Text
+          style={[
+            styles.sectionLabel,
+            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
+          ]}
+        >
+          AI ASSISTANT
+        </Text>
+
+        {/* Provider selector */}
+        <View
+          style={[
+            styles.row,
+            {
+              backgroundColor: c.card,
+              borderColor: c.border,
+              borderRadius: c.radius,
+              borderWidth: 1,
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 0,
+            },
+          ]}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
+            <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+              <Feather name="zap" size={18} color={c.primary} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                Provider
+              </Text>
+              <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                Which AI service powers Popo
+              </Text>
+            </View>
+          </View>
+          <View style={styles.chipRow}>
+            {(["claude", "openai", "gemini"] as AIProvider[]).map((p) => {
+              const active = activeProvider === p;
+              const label = p === "claude" ? "Claude" : p === "openai" ? "OpenAI" : "Gemini";
+              return (
+                <TouchableOpacity
+                  key={p}
+                  onPress={() => {
+                    updateSettings({ aiProvider: p, aiModel: DEFAULT_MODEL[p] });
+                  }}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 },
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" },
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={[styles.separator, { backgroundColor: c.border }]} />
+
+        {/* API Key */}
+        <View
+          style={[
+            styles.row,
+            {
+              backgroundColor: c.card,
+              borderColor: c.border,
+              borderTopLeftRadius: 0,
+              borderTopRightRadius: 0,
+              borderBottomLeftRadius: c.radius,
+              borderBottomRightRadius: c.radius,
+              borderWidth: 1,
+              borderTopWidth: 0,
+              gap: 8,
+            },
+          ]}
+        >
+          <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+            <Feather name="key" size={18} color={c.primary} />
+          </View>
+          <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium", flex: 0, minWidth: 72 }]}>
+            API Key
+          </Text>
+          <TextInput
+            style={[
+              styles.nameInput,
+              {
+                color: c.foreground,
+                fontFamily: "Inter_400Regular",
+                borderColor: c.border,
+                borderRadius: 8,
+                backgroundColor: c.secondary,
+              },
+            ]}
+            value={localApiKey}
+            onChangeText={setLocalApiKey}
+            onBlur={() => SecureStore.setItemAsync(`popo_apikey_${activeProvider}`, localApiKey)}
+            placeholder="Paste your API key…"
+            placeholderTextColor={c.mutedForeground}
+            secureTextEntry={!showApiKey}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="done"
+          />
+          <TouchableOpacity
+            onPress={() => setShowApiKey((v) => !v)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Feather name={showApiKey ? "eye-off" : "eye"} size={16} color={c.mutedForeground} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Model selector */}
+        <View
+          style={[
+            styles.row,
+            {
+              backgroundColor: c.card,
+              borderColor: c.border,
+              borderRadius: c.radius,
+              borderWidth: 1,
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 0,
+              marginTop: 8,
+            },
+          ]}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
+            <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+              <Feather name="cpu" size={18} color={c.primary} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                Model
+              </Text>
+              <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                Faster models cost less; smarter models reason better
+              </Text>
+            </View>
+          </View>
+          <View style={styles.chipRow}>
+            {PROVIDER_MODELS[activeProvider].map((m) => {
+              const active = (settings.aiModel ?? DEFAULT_MODEL[activeProvider]) === m.id;
+              return (
+                <TouchableOpacity
+                  key={m.id}
+                  onPress={() => updateSettings({ aiModel: m.id })}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 },
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" },
+                    ]}
+                  >
+                    {m.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
 
         {/* ── Google Drive Backup ── */}
         <Text

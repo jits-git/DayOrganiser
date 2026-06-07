@@ -277,6 +277,13 @@ export default function TodayScreen() {
             <Feather name="settings" size={18} color={c.foreground} />
           </TouchableOpacity>
           <TouchableOpacity
+            onPress={() => router.push("/popo")}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={[styles.iconBtn, { backgroundColor: c.primary + "18", borderRadius: 20 }]}
+          >
+            <Feather name="zap" size={18} color={c.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
             onPress={() => setVoiceModalVisible(true)}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={[styles.iconBtn, { backgroundColor: c.secondary, borderRadius: 20 }]}

@@ -3,6 +3,8 @@ export interface NotificationTime {
   minute: number;
 }
 
+export type AIProvider = "claude" | "openai" | "gemini";
+
 export interface AppSettings {
   morningNotification: NotificationTime;
   afternoonNotification: NotificationTime;
@@ -17,6 +19,8 @@ export interface AppSettings {
   googleTokenExpiry?: number;
   googleUserEmail?: string;
   lastDriveSync?: string;
+  aiProvider?: AIProvider;
+  aiModel?: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

@@ -51,6 +51,13 @@ function AppShell() {
             presentation: "modal",
           }}
         />
+        <Stack.Screen
+          name="popo"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+          }}
+        />
       </Stack>
       <OnboardingModal visible={isSettingsLoaded && !settings.onboardingComplete} />
     </>
