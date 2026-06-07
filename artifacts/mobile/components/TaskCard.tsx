@@ -84,19 +84,30 @@ export function TaskCard({ task, onComplete, onPress }: TaskCardProps) {
           <View style={[styles.accent, { backgroundColor: statusColor }]} />
 
           <View style={styles.content}>
-            <Text
-              style={[
-                styles.description,
-                {
-                  color: task.isCompleted ? colors.mutedForeground : colors.foreground,
-                  textDecorationLine: task.isCompleted ? "line-through" : "none",
-                  fontFamily: "Inter_600SemiBold",
-                },
-              ]}
-              numberOfLines={2}
-            >
-              {task.description}
-            </Text>
+            <View style={styles.descRow}>
+              {!!task.isImportant && !task.isCompleted && (
+                <Feather
+                  name="star"
+                  size={13}
+                  color="#F59E0B"
+                  style={styles.starIcon}
+                />
+              )}
+              <Text
+                style={[
+                  styles.description,
+                  {
+                    color: task.isCompleted ? colors.mutedForeground : colors.foreground,
+                    textDecorationLine: task.isCompleted ? "line-through" : "none",
+                    fontFamily: "Inter_600SemiBold",
+                    flex: 1,
+                  },
+                ]}
+                numberOfLines={2}
+              >
+                {task.description}
+              </Text>
+            </View>
 
             {!!task.detail && (
               <Text
@@ -193,6 +204,14 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     gap: 4,
+  },
+  descRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 5,
+  },
+  starIcon: {
+    marginTop: 3,
   },
   description: {
     fontSize: 15,

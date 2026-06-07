@@ -10,6 +10,7 @@ import React, {
 import { Task } from "@/types/task";
 import {
   cancelTaskNotification,
+  scheduleDeadlineNotification,
   scheduleTaskNotification,
 } from "@/hooks/useNotifications";
 
@@ -19,7 +20,7 @@ interface TaskContextType {
   tasks: Task[];
   loading: boolean;
   addTask: (
-    task: Omit<Task, "id" | "isCompleted" | "notificationId">
+    task: Omit<Task, "id" | "isCompleted" | "notificationId" | "deadlineNotificationId">
   ) => Promise<void>;
   updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
   completeTask: (id: string) => Promise<void>;
@@ -54,12 +55,14 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   }
 
   const addTask = useCallback(
-    async (data: Omit<Task, "id" | "isCompleted" | "notificationId">) => {
+    async (data: Omit<Task, "id" | "isCompleted" | "notificationId" | "deadlineNotificationId">) => {
       const id =
         Date.now().toString() + Math.random().toString(36).substr(2, 9);
       const task: Task = { ...data, id, isCompleted: false };
       const notificationId = await scheduleTaskNotification(task);
       if (notificationId) task.notificationId = notificationId;
+      const deadlineNotificationId = await scheduleDeadlineNotification(task);
+      if (deadlineNotificationId) task.deadlineNotificationId = deadlineNotificationId;
       const updated = [...tasks, task];
       await persistTasks(updated);
     },
@@ -74,14 +77,24 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
       if (existing.notificationId) {
         await cancelTaskNotification(existing.notificationId);
       }
+      if (existing.deadlineNotificationId) {
+        await cancelTaskNotification(existing.deadlineNotificationId);
+      }
 
       const updated = tasks.map((t) => (t.id === id ? { ...t, ...updates } : t));
       const taskUpdated = updated.find((t) => t.id === id)!;
 
       if (!taskUpdated.isCompleted) {
         const notificationId = await scheduleTaskNotification(taskUpdated);
+        const deadlineNotificationId = await scheduleDeadlineNotification(taskUpdated);
         const finalUpdated = updated.map((t) =>
-          t.id === id ? { ...t, notificationId: notificationId ?? undefined } : t
+          t.id === id
+            ? {
+                ...t,
+                notificationId: notificationId ?? undefined,
+                deadlineNotificationId: deadlineNotificationId ?? undefined,
+              }
+            : t
         );
         await persistTasks(finalUpdated);
       } else {
@@ -98,6 +111,9 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
       if (task.notificationId) {
         await cancelTaskNotification(task.notificationId);
       }
+      if (task.deadlineNotificationId) {
+        await cancelTaskNotification(task.deadlineNotificationId);
+      }
       const updated = tasks.map((t) =>
         t.id === id
           ? {
@@ -105,6 +121,7 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
               isCompleted: true,
               completedAt: new Date().toISOString(),
               notificationId: undefined,
+              deadlineNotificationId: undefined,
             }
           : t
       );
@@ -118,6 +135,9 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
       const task = tasks.find((t) => t.id === id);
       if (task?.notificationId) {
         await cancelTaskNotification(task.notificationId);
+      }
+      if (task?.deadlineNotificationId) {
+        await cancelTaskNotification(task.deadlineNotificationId);
       }
       const updated = tasks.filter((t) => t.id !== id);
       await persistTasks(updated);

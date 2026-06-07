@@ -85,6 +85,7 @@ export function TaskModal({ visible, task, initialDate, prefilled, onClose }: Ta
   const [description, setDescription] = useState("");
   const [detail, setDetail] = useState("");
   const [selectedColor, setSelectedColor] = useState<string | undefined>(undefined);
+  const [isImportant, setIsImportant] = useState(false);
   const [targetDate, setTargetDate] = useState<Date>(roundToNext15(new Date()));
   const [hardDeadline, setHardDeadline] = useState<Date>(
     roundToNext15(new Date(Date.now() + 2 * 60 * 60 * 1000))
@@ -97,12 +98,14 @@ export function TaskModal({ visible, task, initialDate, prefilled, onClose }: Ta
         setDescription(task.description);
         setDetail(task.detail ?? "");
         setSelectedColor(task.color);
+        setIsImportant(task.isImportant ?? false);
         setTargetDate(new Date(task.targetDate));
         setHardDeadline(new Date(task.hardDeadline));
       } else {
         setDescription(prefilled?.description ?? "");
         setDetail("");
         setSelectedColor(undefined);
+        setIsImportant(false);
         const base = prefilled?.targetDate
           ? prefilled.targetDate
           : initialDate
@@ -179,6 +182,7 @@ export function TaskModal({ visible, task, initialDate, prefilled, onClose }: Ta
         description: description.trim(),
         detail: detail.trim() || undefined,
         color: selectedColor,
+        isImportant,
         targetDate: targetDate.toISOString(),
         hardDeadline: hardDeadline.toISOString(),
         targetOverduePrompted: false,
@@ -189,6 +193,7 @@ export function TaskModal({ visible, task, initialDate, prefilled, onClose }: Ta
         description: description.trim(),
         detail: detail.trim() || undefined,
         color: selectedColor,
+        isImportant,
         targetDate: targetDate.toISOString(),
         hardDeadline: hardDeadline.toISOString(),
       });
@@ -311,6 +316,37 @@ export function TaskModal({ visible, task, initialDate, prefilled, onClose }: Ta
             numberOfLines={3}
             textAlignVertical="top"
           />
+
+          <TouchableOpacity
+            onPress={() => setIsImportant((v) => !v)}
+            activeOpacity={0.7}
+            style={[
+              styles.importanceBtn,
+              {
+                backgroundColor: isImportant ? "#F59E0B18" : c.secondary,
+                borderColor: isImportant ? "#F59E0B" : "transparent",
+                borderRadius: c.radius,
+                marginTop: 20,
+              },
+            ]}
+          >
+            <Feather
+              name="star"
+              size={16}
+              color={isImportant ? "#F59E0B" : c.mutedForeground}
+            />
+            <Text
+              style={[
+                styles.importanceBtnText,
+                {
+                  color: isImportant ? "#F59E0B" : c.mutedForeground,
+                  fontFamily: "Inter_500Medium",
+                },
+              ]}
+            >
+              {isImportant ? "Important" : "Mark as important"}
+            </Text>
+          </TouchableOpacity>
 
           <Text
             style={[
@@ -591,4 +627,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   saveBtnText: { fontSize: 16 },
+  importanceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    alignSelf: "flex-start",
+  },
+  importanceBtnText: { fontSize: 14 },
 });

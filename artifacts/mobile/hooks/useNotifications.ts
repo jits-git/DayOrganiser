@@ -138,6 +138,33 @@ export async function scheduleTaskNotification(
   }
 }
 
+export async function scheduleDeadlineNotification(
+  task: Task
+): Promise<string | null> {
+  if (!N || task.isCompleted || !task.isImportant) return null;
+
+  const deadlineTime = new Date(task.hardDeadline).getTime();
+  const oneHourBefore = new Date(deadlineTime - 60 * 60 * 1000);
+  if (oneHourBefore <= new Date()) return null;
+
+  try {
+    const id = await N.scheduleNotificationAsync({
+      content: {
+        title: "⭐ Important deadline in 1 hour",
+        body: task.description,
+        sound: true,
+      },
+      trigger: {
+        type: N.SchedulableTriggerInputTypes.DATE,
+        date: oneHourBefore,
+      },
+    });
+    return id;
+  } catch {
+    return null;
+  }
+}
+
 export async function cancelTaskNotification(
   notificationId: string
 ): Promise<void> {
