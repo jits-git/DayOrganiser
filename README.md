@@ -174,7 +174,7 @@ Firebase offers Google login and Firestore in one integrated package with minima
 - [ ] **Today tab redesign** — continuous scrollable timeline transitioning from Today → Tomorrow → This Week → Later, replacing the need for a separate Week tab
 - [ ] **Remove Week tab** — replaced by the scrollable Today timeline; Month tab moves to the center position
 - [ ] **Summarize button** — new bottom-right tab that triggers an immediate voice summary of: important tasks missed, tasks completed today, important tasks still ahead, and total incomplete count for the day
-- [ ] **Login & cloud backup** — Google login via Firebase Authentication + Firestore sync so tasks are backed up and restorable across devices and reinstalls; optional Google Drive JSON export
+- [x] **Login & cloud backup** — Google login via Firebase Authentication + Firestore sync so tasks are backed up and restorable across devices and reinstalls; optional Google Drive JSON export
 - [ ] Recurring tasks
 - [ ] Google Calendar integration
 - [ ] Widget for home screen
