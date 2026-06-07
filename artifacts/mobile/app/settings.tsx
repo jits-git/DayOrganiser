@@ -1,8 +1,10 @@
 import DateTimePicker from "@react-native-community/datetimepicker";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
+  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,12 +18,28 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useColors } from "@/hooks/useColors";
 import { useSettings } from "@/context/SettingsContext";
+import { useGoogleAuth } from "@/context/GoogleAuthContext";
 import { triggerAnnouncement } from "@/hooks/useVoiceAnnouncement";
+import { backupToDrive, restoreFromDrive } from "@/utils/googleDrive";
+
+const TASKS_KEY = "@dayorganizer/tasks";
+const SETTINGS_KEY = "@dayorganizer/settings";
 
 function formatTime(hour: number, minute: number): string {
   const d = new Date();
   d.setHours(hour, minute, 0, 0);
   return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+function formatSyncTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 type PickerKey = "morning" | "afternoon" | "evening";
@@ -30,6 +48,7 @@ export default function SettingsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const { settings, updateSettings } = useSettings();
+  const { isSignedIn, userEmail, signIn, signOut } = useGoogleAuth();
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -37,6 +56,8 @@ export default function SettingsScreen() {
   const [localAssistantName, setLocalAssistantName] = useState(
     settings.assistantName || "Kate"
   );
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   useEffect(() => {
     setLocalUserName(settings.userName);
@@ -108,6 +129,77 @@ export default function SettingsScreen() {
         return d;
       })()
     : new Date();
+
+  async function handleSyncNow() {
+    setIsSyncing(true);
+    try {
+      await backupToDrive();
+      await updateSettings({ lastDriveSync: new Date().toISOString() });
+      Alert.alert("Synced", "Backup saved to Google Drive.");
+    } catch (e: any) {
+      Alert.alert("Sync Failed", e?.message ?? "Could not sync to Google Drive.");
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  async function handleRestore() {
+    Alert.alert(
+      "Restore from Drive",
+      "This will overwrite your current tasks and settings with the latest backup. Continue?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Restore",
+          style: "destructive",
+          onPress: async () => {
+            setIsRestoring(true);
+            try {
+              const data = await restoreFromDrive();
+              if (!data) {
+                Alert.alert("No Backup", "No backup.json found in your DayOrganizer Drive folder.");
+                return;
+              }
+
+              // Preserve current auth tokens
+              const currentTokens = {
+                googleAccessToken: settings.googleAccessToken,
+                googleRefreshToken: settings.googleRefreshToken,
+                googleTokenExpiry: settings.googleTokenExpiry,
+                googleUserEmail: settings.googleUserEmail,
+                lastDriveSync: settings.lastDriveSync,
+              };
+
+              if (data.tasks) {
+                await AsyncStorage.setItem(TASKS_KEY, JSON.stringify(data.tasks));
+              }
+              if (data.settings) {
+                const restoredSettings = { ...data.settings, ...currentTokens };
+                await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(restoredSettings));
+              }
+
+              Alert.alert(
+                "Restored",
+                "Your tasks and settings have been restored. Please restart the app.",
+                [{ text: "OK" }]
+              );
+            } catch (e: any) {
+              Alert.alert("Restore Failed", e?.message ?? "Could not restore from Google Drive.");
+            } finally {
+              setIsRestoring(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleSignOut() {
+    Alert.alert("Sign Out", "Disconnect Google Drive backup?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Sign Out", style: "destructive", onPress: signOut },
+    ]);
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
@@ -495,6 +587,116 @@ export default function SettingsScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* ── Google Drive Backup ── */}
+        <Text
+          style={[
+            styles.sectionLabel,
+            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
+          ]}
+        >
+          GOOGLE DRIVE BACKUP
+        </Text>
+
+        {!isSignedIn ? (
+          <TouchableOpacity
+            onPress={signIn}
+            activeOpacity={0.8}
+            style={[
+              styles.driveBtn,
+              {
+                backgroundColor: c.primary,
+                borderRadius: c.radius,
+              },
+            ]}
+          >
+            <Feather name="log-in" size={18} color={c.primaryForeground} />
+            <Text style={[styles.driveBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
+              Login with Google
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={[styles.driveCard, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius }]}>
+            <View style={styles.driveAccountRow}>
+              <View style={[styles.iconWrap, { backgroundColor: "#4285F418", borderRadius: 10 }]}>
+                <Feather name="hard-drive" size={18} color="#4285F4" />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                  Google Drive
+                </Text>
+                {userEmail ? (
+                  <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                    {userEmail}
+                  </Text>
+                ) : null}
+                {settings.lastDriveSync ? (
+                  <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                    Last synced: {formatSyncTime(settings.lastDriveSync)}
+                  </Text>
+                ) : (
+                  <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                    Never synced
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            <View style={[styles.driveSeparator, { backgroundColor: c.border }]} />
+
+            <View style={styles.driveActions}>
+              <TouchableOpacity
+                onPress={handleSyncNow}
+                disabled={isSyncing}
+                activeOpacity={0.8}
+                style={[
+                  styles.driveActionBtn,
+                  { backgroundColor: c.primary, borderRadius: c.radius, opacity: isSyncing ? 0.6 : 1 },
+                ]}
+              >
+                <Feather name="upload-cloud" size={16} color={c.primaryForeground} />
+                <Text style={[styles.driveActionText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
+                  {isSyncing ? "Syncing…" : "Sync Now"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleRestore}
+                disabled={isRestoring}
+                activeOpacity={0.8}
+                style={[
+                  styles.driveActionBtn,
+                  { backgroundColor: c.secondary, borderRadius: c.radius, opacity: isRestoring ? 0.6 : 1 },
+                ]}
+              >
+                <Feather name="download-cloud" size={16} color={c.foreground} />
+                <Text style={[styles.driveActionText, { color: c.foreground, fontFamily: "Inter_600SemiBold" }]}>
+                  {isRestoring ? "Restoring…" : "Restore"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleSignOut}
+                activeOpacity={0.8}
+                style={[
+                  styles.driveActionBtn,
+                  { backgroundColor: c.secondary, borderRadius: c.radius },
+                ]}
+              >
+                <Feather name="log-out" size={16} color={c.mutedForeground} />
+                <Text style={[styles.driveActionText, { color: c.mutedForeground, fontFamily: "Inter_500Medium" }]}>
+                  Sign Out
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        <Text style={[styles.driveNote, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+          {isSignedIn
+            ? "Auto-syncs every 4 hours between 5 AM–11 PM. Backup saved to DayOrganizer/backup.json in your Drive."
+            : "Connect Google to back up tasks and settings to your Google Drive."}
+        </Text>
+
         <Text
           style={[
             styles.footerNote,
@@ -601,4 +803,45 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   debugBtnText: { fontSize: 14 },
+  // Google Drive styles
+  driveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 14,
+  },
+  driveBtnText: { fontSize: 15 },
+  driveCard: {
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  driveAccountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+  },
+  driveSeparator: { height: StyleSheet.hairlineWidth },
+  driveActions: {
+    flexDirection: "row",
+    gap: 8,
+    padding: 12,
+  },
+  driveActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 4,
+  },
+  driveActionText: { fontSize: 13 },
+  driveNote: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 8,
+    textAlign: "center",
+  },
 });

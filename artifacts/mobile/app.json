@@ -24,7 +24,19 @@
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.jitsassistant.mobile"
+      "package": "com.jitsassistant.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "com.googleusercontent.apps.1057440910574-2gbnl28aug90lnpi8ubui54650o6cq2a"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/images/icon.png"

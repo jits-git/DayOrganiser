@@ -15,8 +15,10 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { OnboardingModal } from "@/components/OnboardingModal";
+import { GoogleAuthProvider } from "@/context/GoogleAuthContext";
 import { SettingsProvider, useSettings } from "@/context/SettingsContext";
 import { TaskProvider } from "@/context/TaskContext";
+import { registerBackgroundSync } from "@/hooks/useBackgroundSync";
 import { useVoiceAnnouncement } from "@/hooks/useVoiceAnnouncement";
 import {
   requestNotificationPermissions,
@@ -35,6 +37,7 @@ async function setupNotifications() {
 }
 
 setupNotifications();
+registerBackgroundSync().catch(() => {});
 
 function AppShell() {
   const { settings, isSettingsLoaded } = useSettings();
@@ -79,9 +82,11 @@ export default function RootLayout() {
           <GestureHandlerRootView>
             <KeyboardProvider>
               <SettingsProvider>
-                <TaskProvider>
-                  <AppShell />
-                </TaskProvider>
+                <GoogleAuthProvider>
+                  <TaskProvider>
+                    <AppShell />
+                  </TaskProvider>
+                </GoogleAuthProvider>
               </SettingsProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>

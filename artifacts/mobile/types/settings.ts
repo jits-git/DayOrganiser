@@ -12,6 +12,11 @@ export interface AppSettings {
   assistantName: string;
   onboardingComplete: boolean;
   voiceAnnouncementsEnabled: boolean;
+  googleAccessToken?: string;
+  googleRefreshToken?: string;
+  googleTokenExpiry?: number;
+  googleUserEmail?: string;
+  lastDriveSync?: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
