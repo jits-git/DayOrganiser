@@ -16,13 +16,13 @@ function NativeTabLayout() {
         <Icon sf={{ default: "sun.max", selected: "sun.max.fill" }} />
         <Label>Today</Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="week">
-        <Icon sf={{ default: "calendar.badge.clock", selected: "calendar.badge.clock" }} />
-        <Label>Week</Label>
-      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="month">
         <Icon sf={{ default: "calendar", selected: "calendar.fill" }} />
         <Label>Month</Label>
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="summarize">
+        <Icon sf={{ default: "waveform", selected: "waveform" }} />
+        <Label>Summary</Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );
@@ -73,18 +73,8 @@ function ClassicTabLayout() {
             ),
         }}
       />
-      <Tabs.Screen
-        name="week"
-        options={{
-          title: "Week",
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="calendar.badge.clock" tintColor={color} size={24} />
-            ) : (
-              <Feather name="calendar" size={22} color={color} />
-            ),
-        }}
-      />
+      {/* Week tab hidden from nav; route kept for backwards compatibility */}
+      <Tabs.Screen name="week" options={{ href: null }} />
       <Tabs.Screen
         name="month"
         options={{
@@ -94,6 +84,18 @@ function ClassicTabLayout() {
               <SymbolView name="calendar" tintColor={color} size={24} />
             ) : (
               <Feather name="grid" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="summarize"
+        options={{
+          title: "Summary",
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="waveform" tintColor={color} size={24} />
+            ) : (
+              <Feather name="volume-2" size={22} color={color} />
             ),
         }}
       />

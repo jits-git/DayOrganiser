@@ -51,6 +51,62 @@ function dedup(tasks: Task[]): Task[] {
   return [...new Map(tasks.map((t) => [t.id, t])).values()];
 }
 
+/**
+ * Immediate on-demand summary: important missed, completed today,
+ * important still ahead, total incomplete today.
+ */
+export function buildSummary(tasks: Task[], settings: AppSettings): string {
+  const now = new Date();
+  const name = settings.userName ? ` ${settings.userName}` : "";
+
+  const active = tasks.filter((t) => !t.isCompleted);
+  const completedToday = tasks.filter(
+    (t) => t.isCompleted && t.completedAt && isSameDay(new Date(t.completedAt), now)
+  );
+  const importantMissed = active.filter(
+    (t) => t.isImportant && new Date(t.hardDeadline) < now
+  );
+  const importantAhead = active.filter(
+    (t) => t.isImportant && new Date(t.hardDeadline) >= now
+  );
+  const incompleteToday = active.filter(
+    (t) =>
+      isSameDay(new Date(t.targetDate), now) ||
+      isSameDay(new Date(t.hardDeadline), now) ||
+      new Date(t.hardDeadline) < now
+  );
+
+  const parts: string[] = [];
+
+  if (completedToday.length > 0) {
+    parts.push(`You completed ${plural(completedToday.length, "task")} today.`);
+  }
+  if (importantMissed.length > 0) {
+    const listed = nameImportant(importantMissed, (t) => t.description);
+    const was = importantMissed.length === 1 ? "was" : "were";
+    parts.push(
+      `${plural(importantMissed.length, "important task")} ${was} missed: ${listed}.`
+    );
+  }
+  if (importantAhead.length > 0) {
+    const listed = nameImportant(
+      importantAhead,
+      (t) => `${t.description} by ${formatShortTime(t.targetDate)}`
+    );
+    parts.push(
+      `${importantAhead.length === 1 ? "Important task" : "Important tasks"} still ahead: ${listed}.`
+    );
+  }
+  if (incompleteToday.length > 0) {
+    parts.push(`${plural(incompleteToday.length, "task")} still incomplete today.`);
+  }
+
+  if (parts.length === 0) {
+    return `Here's your summary${name}! Nothing pending. Great work!`;
+  }
+  return `Here's your summary${name}! ${parts.join(" ")}`;
+}
+
 export function buildAnnouncement(
   tasks: Task[],
   settings: AppSettings,
