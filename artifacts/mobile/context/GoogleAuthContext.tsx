@@ -1,7 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as AuthSession from "expo-auth-session";
-import * as Google from "expo-auth-session/providers/google";
-import * as WebBrowser from "expo-web-browser";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import React, {
   createContext,
   useCallback,
@@ -11,14 +8,17 @@ import React, {
 } from "react";
 
 import { useSettings } from "@/context/SettingsContext";
-
-WebBrowser.maybeCompleteAuthSession();
+import { backupToDrive, isWithinSyncWindow } from "@/utils/googleDrive";
 
 const WEB_CLIENT_ID =
   "1057440910574-hpftfahagdk7acfunru08nkm6f2g53nr.apps.googleusercontent.com";
-const ANDROID_CLIENT_ID =
-  "1057440910574-2gbnl28aug90lnpi8ubui54650o6cq2a.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+
+GoogleSignin.configure({
+  webClientId: WEB_CLIENT_ID,
+  scopes: [DRIVE_SCOPE],
+  offlineAccess: true,
+});
 
 interface GoogleAuthContextType {
   isSignedIn: boolean;
@@ -33,42 +33,44 @@ export function GoogleAuthProvider({ children }: { children: React.ReactNode }) 
   const { settings, updateSettings } = useSettings();
   const [isSignedIn, setIsSignedIn] = useState(!!settings.googleAccessToken);
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: WEB_CLIENT_ID,
-    androidClientId: ANDROID_CLIENT_ID,
-    scopes: [DRIVE_SCOPE],
-  });
-
   useEffect(() => {
     setIsSignedIn(!!settings.googleAccessToken);
   }, [settings.googleAccessToken]);
 
   useEffect(() => {
-    if (response?.type === "success") {
-      const { authentication } = response;
-      if (authentication?.accessToken) {
-        const expiry = authentication.expiresIn
-          ? Date.now() + authentication.expiresIn * 1000
-          : Date.now() + 3600 * 1000;
-
-        fetchUserEmail(authentication.accessToken).then((email) => {
-          updateSettings({
-            googleAccessToken: authentication.accessToken,
-            googleRefreshToken: authentication.refreshToken ?? undefined,
-            googleTokenExpiry: expiry,
-            googleUserEmail: email ?? undefined,
-          });
-          setIsSignedIn(true);
-        });
+    if (!isSignedIn) return;
+    const FOUR_HOURS = 4 * 60 * 60 * 1000;
+    const id = setInterval(async () => {
+      if (!isWithinSyncWindow()) return;
+      try {
+        // Refresh the token before syncing so it doesn't expire mid-operation
+        const { accessToken } = await GoogleSignin.getTokens();
+        await updateSettings({ googleAccessToken: accessToken });
+        await backupToDrive();
+        await updateSettings({ lastDriveSync: new Date().toISOString() });
+      } catch {
+        // silently ignore foreground sync failures
       }
-    }
-  }, [response]);
+    }, FOUR_HOURS);
+    return () => clearInterval(id);
+  }, [isSignedIn]);
 
   const signIn = useCallback(async () => {
-    await promptAsync();
-  }, [promptAsync]);
+    await GoogleSignin.hasPlayServices();
+    const result = await GoogleSignin.signIn();
+    if (result.type !== "success") return;
+
+    const { accessToken } = await GoogleSignin.getTokens();
+    await updateSettings({
+      googleAccessToken: accessToken,
+      googleTokenExpiry: Date.now() + 3600 * 1000,
+      googleUserEmail: result.data.user.email,
+    });
+    setIsSignedIn(true);
+  }, [updateSettings]);
 
   const signOut = useCallback(async () => {
+    await GoogleSignin.signOut();
     await updateSettings({
       googleAccessToken: undefined,
       googleRefreshToken: undefined,
@@ -92,16 +94,4 @@ export function useGoogleAuth() {
   const ctx = useContext(GoogleAuthContext);
   if (!ctx) throw new Error("useGoogleAuth must be used within GoogleAuthProvider");
   return ctx;
-}
-
-async function fetchUserEmail(token: string): Promise<string | null> {
-  try {
-    const res = await fetch("https://www.googleapis.com/userinfo/v2/me", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    return data.email ?? null;
-  } catch {
-    return null;
-  }
 }
