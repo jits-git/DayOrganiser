@@ -21,6 +21,10 @@ export interface AppSettings {
   lastDriveSync?: string;
   aiProvider?: AIProvider;
   aiModel?: string;
+  proMode?: boolean;
+  morningEnabled?: boolean;
+  afternoonEnabled?: boolean;
+  eveningEnabled?: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -32,4 +36,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   assistantName: "Kate",
   onboardingComplete: false,
   voiceAnnouncementsEnabled: false,
+  proMode: false,
+  morningEnabled: true,
+  afternoonEnabled: true,
+  eveningEnabled: true,
 };

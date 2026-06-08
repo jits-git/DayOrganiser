@@ -21,7 +21,8 @@
       "Bash(python3 -c ' *)",
       "Bash(git push *)",
       "Bash(grep -v \"^$\")",
-      "Bash(grep -v \"calendar.fill\\\\|useColors.ts\\\\|radius.*incompatible\\\\|^$\")"
+      "Bash(grep -v \"calendar.fill\\\\|useColors.ts\\\\|radius.*incompatible\\\\|^$\")",
+      "Bash(grep -E '\\\\.\\(tsx|ts\\)$')"
     ]
   }
 }

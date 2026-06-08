@@ -18,6 +18,7 @@ import { VoiceTaskModal } from "@/components/VoiceTaskModal";
 import { useSettings } from "@/context/SettingsContext";
 import { useTasks } from "@/context/TaskContext";
 import { useColors } from "@/hooks/useColors";
+import { PRO_MODE_ENABLED } from "@/constants/buildConfig";
 import { ParsedVoiceInput } from "@/utils/parseVoice";
 import { Task } from "@/types/task";
 
@@ -267,6 +268,14 @@ export default function TodayScreen() {
           >
             {title}
           </Text>
+          {PRO_MODE_ENABLED && settings.proMode && (
+            <View style={styles.proModeBadge}>
+              <Feather name="zap" size={11} color="#D97706" />
+              <Text style={[styles.proModeText, { fontFamily: "Inter_500Medium" }]}>
+                Pro Mode
+              </Text>
+            </View>
+          )}
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -356,6 +365,18 @@ const styles = StyleSheet.create({
   iconBtn: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
   dateLabel: { fontSize: 13, marginBottom: 2 },
   titleText: { fontSize: 32 },
+  proModeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    marginTop: 6,
+    backgroundColor: "#F59E0B15",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  proModeText: { fontSize: 11, color: "#D97706", letterSpacing: 0.3 },
   // section header (sticky)
   sectionHeader: {
     flexDirection: "row",

@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -20,10 +21,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useSettings } from "@/context/SettingsContext";
 import { useGoogleAuth } from "@/context/GoogleAuthContext";
-import { triggerAnnouncement } from "@/hooks/useVoiceAnnouncement";
 import { backupToDrive, restoreFromDrive } from "@/utils/googleDrive";
 import { AIProvider } from "@/types/settings";
 import { PROVIDER_MODELS, DEFAULT_MODEL } from "@/utils/aiProvider";
+import { PRO_MODE_ENABLED } from "@/constants/buildConfig";
 
 const TASKS_KEY = "@dayorganizer/tasks";
 const SETTINGS_KEY = "@dayorganizer/settings";
@@ -50,11 +51,10 @@ type PickerKey = "morning" | "afternoon" | "evening";
 export default function SettingsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
-  const { settings, updateSettings } = useSettings();
+  const { settings, updateSettings, openIntroduction } = useSettings();
   const { isSignedIn, userEmail, signIn, signOut } = useGoogleAuth();
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [localUserName, setLocalUserName] = useState(settings.userName);
   const [localAssistantName, setLocalAssistantName] = useState(
     settings.assistantName || "Kate"
@@ -86,6 +86,8 @@ export default function SettingsScreen() {
     sublabel: string;
     icon: string;
     time: { hour: number; minute: number };
+    enabled: boolean;
+    onToggle: (v: boolean) => void;
   }[] = [
     {
       key: "morning",
@@ -93,6 +95,8 @@ export default function SettingsScreen() {
       sublabel: "Daily task overview at the start of the day",
       icon: "sunrise",
       time: settings.morningNotification,
+      enabled: settings.morningEnabled !== false,
+      onToggle: (v) => updateSettings({ morningEnabled: v }),
     },
     {
       key: "afternoon",
@@ -100,6 +104,8 @@ export default function SettingsScreen() {
       sublabel: "Progress update and remaining tasks",
       icon: "sun",
       time: settings.afternoonNotification,
+      enabled: settings.afternoonEnabled !== false,
+      onToggle: (v) => updateSettings({ afternoonEnabled: v }),
     },
     {
       key: "evening",
@@ -107,6 +113,8 @@ export default function SettingsScreen() {
       sublabel: "End-of-day summary of completed and pending tasks",
       icon: "sunset",
       time: settings.eveningNotification,
+      enabled: settings.eveningEnabled !== false,
+      onToggle: (v) => updateSettings({ eveningEnabled: v }),
     },
   ];
 
@@ -244,198 +252,9 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.body, { paddingBottom: bottomInset + 32 }]}
         showsVerticalScrollIndicator={false}
       >
+        {/* ── PERSONAL ── */}
         <Text
-          style={[
-            styles.sectionLabel,
-            { color: c.mutedForeground, fontFamily: "Inter_500Medium" },
-          ]}
-        >
-          NOTIFICATION TIMES
-        </Text>
-
-        {rows.map((row, idx) => (
-          <View key={row.key}>
-            <TouchableOpacity
-              style={[
-                styles.row,
-                {
-                  backgroundColor: c.card,
-                  borderColor: c.border,
-                  borderRadius: c.radius,
-                  borderTopLeftRadius: idx === 0 ? c.radius : 0,
-                  borderTopRightRadius: idx === 0 ? c.radius : 0,
-                  borderBottomLeftRadius: idx === rows.length - 1 ? c.radius : 0,
-                  borderBottomRightRadius: idx === rows.length - 1 ? c.radius : 0,
-                  borderBottomWidth: idx < rows.length - 1 ? 0 : 1,
-                },
-              ]}
-              onPress={() => setActivePicker(activePicker === row.key ? null : row.key)}
-              activeOpacity={0.8}
-            >
-              <View
-                style={[
-                  styles.iconWrap,
-                  { backgroundColor: c.primary + "18", borderRadius: 10 },
-                ]}
-              >
-                <Feather name={row.icon as any} size={18} color={c.primary} />
-              </View>
-              <View style={styles.rowText}>
-                <Text
-                  style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}
-                >
-                  {row.label}
-                </Text>
-                <Text
-                  style={[
-                    styles.rowSublabel,
-                    { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
-                  ]}
-                >
-                  {row.sublabel}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.timePill,
-                  {
-                    backgroundColor:
-                      activePicker === row.key ? c.primary : c.secondary,
-                    borderRadius: 16,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.timeText,
-                    {
-                      color: activePicker === row.key ? c.primaryForeground : c.primary,
-                      fontFamily: "Inter_600SemiBold",
-                    },
-                  ]}
-                >
-                  {formatTime(row.time.hour, row.time.minute)}
-                </Text>
-              </View>
-            </TouchableOpacity>
-
-            {idx < rows.length - 1 && (
-              <View style={[styles.separator, { backgroundColor: c.border }]} />
-            )}
-
-            {Platform.OS === "ios" && activePicker === row.key && (
-              <View
-                style={[
-                  styles.iosPicker,
-                  {
-                    backgroundColor: c.card,
-                    borderColor: c.border,
-                    borderRadius: c.radius,
-                  },
-                ]}
-              >
-                <DateTimePicker
-                  value={currentPickerValue}
-                  mode="time"
-                  display="spinner"
-                  onChange={handlePickerChange}
-                  textColor={c.foreground}
-                />
-                <TouchableOpacity
-                  onPress={() => setActivePicker(null)}
-                  style={[
-                    styles.doneBtn,
-                    { backgroundColor: c.primary, borderRadius: c.radius },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.doneBtnText,
-                      { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" },
-                    ]}
-                  >
-                    Done
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        ))}
-
-        <Text
-          style={[
-            styles.sectionLabel,
-            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
-          ]}
-        >
-          TASK DEFAULTS
-        </Text>
-
-        <View
-          style={[
-            styles.row,
-            {
-              backgroundColor: c.card,
-              borderColor: c.border,
-              borderRadius: c.radius,
-              borderWidth: 1,
-              flexDirection: "column",
-              alignItems: "flex-start",
-              gap: 0,
-            },
-          ]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
-            <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
-              <Feather name="clock" size={18} color={c.primary} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
-                Hard Deadline Offset
-              </Text>
-              <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-                Default days added after target completion
-              </Text>
-            </View>
-          </View>
-          <View style={styles.chipRow}>
-            {([0, 1, 2, 3, 7] as const).map((days) => {
-              const active = (settings.hardDeadlineOffsetDays ?? 0) === days;
-              return (
-                <TouchableOpacity
-                  key={days}
-                  onPress={() => updateSettings({ hardDeadlineOffsetDays: days })}
-                  style={[
-                    styles.chip,
-                    {
-                      backgroundColor: active ? c.primary : c.secondary,
-                      borderRadius: 14,
-                    },
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      {
-                        color: active ? c.primaryForeground : c.foreground,
-                        fontFamily: "Inter_500Medium",
-                      },
-                    ]}
-                  >
-                    {days === 0 ? "Same day" : `+${days} day${days > 1 ? "s" : ""}`}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        <Text
-          style={[
-            styles.sectionLabel,
-            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
-          ]}
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium" }]}
         >
           PERSONAL
         </Text>
@@ -483,19 +302,11 @@ export default function SettingsScreen() {
                 },
               ]}
             >
-              <View
-                style={[
-                  styles.iconWrap,
-                  { backgroundColor: c.primary + "18", borderRadius: 10 },
-                ]}
-              >
+              <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
                 <Feather name={field.icon as any} size={18} color={c.primary} />
               </View>
               <Text
-                style={[
-                  styles.rowLabel,
-                  { color: c.foreground, fontFamily: "Inter_500Medium", flex: 0, minWidth: 120 },
-                ]}
+                style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium", flex: 0, minWidth: 120 }]}
               >
                 {field.label}
               </Text>
@@ -525,279 +336,28 @@ export default function SettingsScreen() {
           </View>
         ))}
 
-        <Text
-          style={[
-            styles.sectionLabel,
-            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
-          ]}
-        >
-          FEATURES
-        </Text>
-
-        <View
-          style={[
-            styles.row,
-            {
-              backgroundColor: c.card,
-              borderColor: c.border,
-              borderRadius: c.radius,
-              borderWidth: 1,
-            },
-          ]}
-        >
-          <View
-            style={[
-              styles.iconWrap,
-              { backgroundColor: c.primary + "18", borderRadius: 10 },
-            ]}
-          >
-            <Feather name="volume-2" size={18} color={c.primary} />
-          </View>
-          <View style={styles.rowText}>
-            <Text
-              style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}
-            >
-              Voice Announcements
-            </Text>
-            <Text
-              style={[
-                styles.rowSublabel,
-                { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
-              ]}
-            >
-              Read a summary aloud when opening from a daily notification
-            </Text>
-          </View>
-          <Switch
-            value={settings.voiceAnnouncementsEnabled ?? false}
-            onValueChange={(v) => updateSettings({ voiceAnnouncementsEnabled: v })}
-            trackColor={{ false: c.border, true: c.primary }}
-            thumbColor="#fff"
-          />
-        </View>
-
-        {/* DEBUG — remove before release */}
         <TouchableOpacity
-          onPress={async () => {
-            setIsSpeaking(true);
-            await triggerAnnouncement("morning");
-            setIsSpeaking(false);
-          }}
-          disabled={isSpeaking}
-          activeOpacity={0.75}
-          style={[
-            styles.debugBtn,
-            {
-              borderColor: c.accent,
-              borderRadius: c.radius,
-              opacity: isSpeaking ? 0.5 : 1,
-            },
-          ]}
-        >
-          <Feather name="play-circle" size={18} color={c.accent} />
-          <Text style={[styles.debugBtnText, { color: c.accent, fontFamily: "Inter_500Medium" }]}>
-            {isSpeaking ? "Speaking…" : "Test Morning Announcement"}
-          </Text>
-        </TouchableOpacity>
-
-        {/* ── AI Assistant ── */}
-        <Text
-          style={[
-            styles.sectionLabel,
-            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
-          ]}
-        >
-          AI ASSISTANT
-        </Text>
-
-        {/* Provider selector */}
-        <View
-          style={[
-            styles.row,
-            {
-              backgroundColor: c.card,
-              borderColor: c.border,
-              borderRadius: c.radius,
-              borderWidth: 1,
-              flexDirection: "column",
-              alignItems: "flex-start",
-              gap: 0,
-            },
-          ]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
-            <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
-              <Feather name="zap" size={18} color={c.primary} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
-                Provider
-              </Text>
-              <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-                Which AI service powers Popo
-              </Text>
-            </View>
-          </View>
-          <View style={styles.chipRow}>
-            {(["claude", "openai", "gemini", "openrouter"] as AIProvider[]).map((p) => {
-              const active = activeProvider === p;
-              const label =
-                p === "claude" ? "Claude" :
-                p === "openai" ? "OpenAI" :
-                p === "gemini" ? "Gemini" : "OpenRouter";
-              return (
-                <TouchableOpacity
-                  key={p}
-                  onPress={() => updateSettings({ aiProvider: p, aiModel: DEFAULT_MODEL[p] })}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 },
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" },
-                    ]}
-                  >
-                    {label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        <View style={[styles.separator, { backgroundColor: c.border }]} />
-
-        {/* API Key */}
-        <View
-          style={[
-            styles.row,
-            {
-              backgroundColor: c.card,
-              borderColor: c.border,
-              borderTopLeftRadius: 0,
-              borderTopRightRadius: 0,
-              borderBottomLeftRadius: c.radius,
-              borderBottomRightRadius: c.radius,
-              borderWidth: 1,
-              borderTopWidth: 0,
-              gap: 8,
-            },
-          ]}
+          onPress={openIntroduction}
+          activeOpacity={0.8}
+          style={[styles.row, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius, borderWidth: 1, marginTop: 10 }]}
         >
           <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
-            <Feather name="key" size={18} color={c.primary} />
+            <Feather name="book-open" size={18} color={c.primary} />
           </View>
-          <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium", flex: 0, minWidth: 72 }]}>
-            API Key
-          </Text>
-          <TextInput
-            style={[
-              styles.nameInput,
-              {
-                color: c.foreground,
-                fontFamily: "Inter_400Regular",
-                borderColor: c.border,
-                borderRadius: 8,
-                backgroundColor: c.secondary,
-              },
-            ]}
-            value={localApiKey}
-            onChangeText={setLocalApiKey}
-            onBlur={() => SecureStore.setItemAsync(`popo_apikey_${activeProvider}`, localApiKey)}
-            placeholder="Paste your API key…"
-            placeholderTextColor={c.mutedForeground}
-            secureTextEntry={!showApiKey}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-          />
-          <TouchableOpacity
-            onPress={() => setShowApiKey((v) => !v)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Feather name={showApiKey ? "eye-off" : "eye"} size={16} color={c.mutedForeground} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Model selector */}
-        <View
-          style={[
-            styles.row,
-            {
-              backgroundColor: c.card,
-              borderColor: c.border,
-              borderRadius: c.radius,
-              borderWidth: 1,
-              flexDirection: "column",
-              alignItems: "flex-start",
-              gap: 0,
-              marginTop: 8,
-            },
-          ]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
-            <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
-              <Feather name="cpu" size={18} color={c.primary} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
-                Model
-              </Text>
-              <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-                Faster models cost less; smarter models reason better
-              </Text>
-            </View>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+              How to use this app
+            </Text>
+            <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+              Replay the introduction guide
+            </Text>
           </View>
-          <View style={styles.chipRow}>
-            {PROVIDER_MODELS[activeProvider].map((m) => {
-              const active = (settings.aiModel ?? DEFAULT_MODEL[activeProvider]) === m.id;
-              return (
-                <TouchableOpacity
-                  key={m.id}
-                  onPress={() => updateSettings({ aiModel: m.id })}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 5 },
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" },
-                    ]}
-                  >
-                    {m.label}
-                  </Text>
-                  {m.free && (
-                    <View style={[styles.freeBadge, { backgroundColor: active ? "rgba(255,255,255,0.25)" : c.primary + "22" }]}>
-                      <Text style={[styles.freeBadgeText, { color: active ? c.primaryForeground : c.primary, fontFamily: "Inter_600SemiBold" }]}>
-                        FREE
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
+          <Feather name="chevron-right" size={18} color={c.mutedForeground} />
+        </TouchableOpacity>
 
-        {activeProvider === "openrouter" && (
-          <Text style={[styles.aiProviderNote, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-            Get a free API key at openrouter.ai — free models have no cost, paid models are billed per token.
-          </Text>
-        )}
-
-        {/* ── Google Drive Backup ── */}
+        {/* ── GOOGLE DRIVE BACKUP ── */}
         <Text
-          style={[
-            styles.sectionLabel,
-            { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 },
-          ]}
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
         >
           GOOGLE DRIVE BACKUP
         </Text>
@@ -806,13 +366,7 @@ export default function SettingsScreen() {
           <TouchableOpacity
             onPress={signIn}
             activeOpacity={0.8}
-            style={[
-              styles.driveBtn,
-              {
-                backgroundColor: c.primary,
-                borderRadius: c.radius,
-              },
-            ]}
+            style={[styles.driveBtn, { backgroundColor: c.primary, borderRadius: c.radius }]}
           >
             <Feather name="log-in" size={18} color={c.primaryForeground} />
             <Text style={[styles.driveBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
@@ -845,47 +399,34 @@ export default function SettingsScreen() {
                 )}
               </View>
             </View>
-
             <View style={[styles.driveSeparator, { backgroundColor: c.border }]} />
-
             <View style={styles.driveActions}>
               <TouchableOpacity
                 onPress={handleSyncNow}
                 disabled={isSyncing}
                 activeOpacity={0.8}
-                style={[
-                  styles.driveActionBtn,
-                  { backgroundColor: c.primary, borderRadius: c.radius, opacity: isSyncing ? 0.6 : 1 },
-                ]}
+                style={[styles.driveActionBtn, { backgroundColor: c.primary, borderRadius: c.radius, opacity: isSyncing ? 0.6 : 1 }]}
               >
                 <Feather name="upload-cloud" size={16} color={c.primaryForeground} />
                 <Text style={[styles.driveActionText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
                   {isSyncing ? "Syncing…" : "Sync Now"}
                 </Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 onPress={handleRestore}
                 disabled={isRestoring}
                 activeOpacity={0.8}
-                style={[
-                  styles.driveActionBtn,
-                  { backgroundColor: c.secondary, borderRadius: c.radius, opacity: isRestoring ? 0.6 : 1 },
-                ]}
+                style={[styles.driveActionBtn, { backgroundColor: c.secondary, borderRadius: c.radius, opacity: isRestoring ? 0.6 : 1 }]}
               >
                 <Feather name="download-cloud" size={16} color={c.foreground} />
                 <Text style={[styles.driveActionText, { color: c.foreground, fontFamily: "Inter_600SemiBold" }]}>
                   {isRestoring ? "Restoring…" : "Restore"}
                 </Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 onPress={handleSignOut}
                 activeOpacity={0.8}
-                style={[
-                  styles.driveActionBtn,
-                  { backgroundColor: c.secondary, borderRadius: c.radius },
-                ]}
+                style={[styles.driveActionBtn, { backgroundColor: c.secondary, borderRadius: c.radius }]}
               >
                 <Feather name="log-out" size={16} color={c.mutedForeground} />
                 <Text style={[styles.driveActionText, { color: c.mutedForeground, fontFamily: "Inter_500Medium" }]}>
@@ -902,12 +443,466 @@ export default function SettingsScreen() {
             : "Connect Google to back up tasks and settings to your Google Drive."}
         </Text>
 
+        {/* ── FEATURES ── */}
         <Text
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
+        >
+          FEATURES
+        </Text>
+
+        <View
+          style={[styles.row, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius, borderWidth: 1 }]}
+        >
+          <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+            <Feather name="volume-2" size={18} color={c.primary} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+              Voice Announcements
+            </Text>
+            <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+              Read a summary aloud when opening from a daily notification
+            </Text>
+          </View>
+          <Switch
+            value={settings.voiceAnnouncementsEnabled ?? false}
+            onValueChange={(v) => updateSettings({ voiceAnnouncementsEnabled: v })}
+            trackColor={{ false: c.border, true: c.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        {/* ── FEEDBACK ── */}
+        <Text
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
+        >
+          FEEDBACK
+        </Text>
+
+        <View
           style={[
-            styles.footerNote,
-            { color: c.mutedForeground, fontFamily: "Inter_400Regular" },
+            styles.feedbackCard,
+            { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius },
           ]}
         >
+          <Text style={[styles.feedbackDesc, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+            Help us improve! Share your thoughts, report bugs, or suggest new features.
+          </Text>
+
+          <TouchableOpacity
+            onPress={() => Linking.openURL("https://forms.gle/93ARw2TuYRANK5m38")}
+            activeOpacity={0.8}
+            style={[styles.feedbackBtn, { backgroundColor: c.primary, borderRadius: c.radius - 2 }]}
+          >
+            <Feather name="message-square" size={16} color={c.primaryForeground} />
+            <Text style={[styles.feedbackBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
+              Share Feedback
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() =>
+              Linking.openURL(
+                `mailto:jits.assistant@gmail.com?subject=Day%20Organizer%20Feedback&body=App%20Version%3A%201.0.0%0AFrom%3A%20${encodeURIComponent(settings.googleUserEmail || "Not signed in")}%0ADevice%3A%20Android%0A%0AYour%20feedback%20here...`
+              )
+            }
+            activeOpacity={0.8}
+            style={[styles.feedbackBtn, { backgroundColor: c.secondary, borderRadius: c.radius - 2 }]}
+          >
+            <Feather name="mail" size={16} color={c.foreground} />
+            <Text style={[styles.feedbackBtnText, { color: c.foreground, fontFamily: "Inter_600SemiBold" }]}>
+              Send Email
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── NOTIFICATION TIMES ── */}
+        <Text
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
+        >
+          NOTIFICATION TIMES
+        </Text>
+
+        {rows.map((row, idx) => (
+          <View key={row.key}>
+            <View
+              style={[
+                styles.row,
+                {
+                  backgroundColor: c.card,
+                  borderColor: c.border,
+                  borderTopLeftRadius: idx === 0 ? c.radius : 0,
+                  borderTopRightRadius: idx === 0 ? c.radius : 0,
+                  borderBottomLeftRadius: idx === rows.length - 1 ? c.radius : 0,
+                  borderBottomRightRadius: idx === rows.length - 1 ? c.radius : 0,
+                  borderBottomWidth: idx < rows.length - 1 ? 0 : 1,
+                  flexDirection: "column",
+                  padding: 0,
+                  gap: 0,
+                  alignItems: "stretch",
+                },
+              ]}
+            >
+              <View style={styles.notifToggleRow}>
+                <View
+                  style={[
+                    styles.iconWrap,
+                    { backgroundColor: row.enabled ? c.primary + "18" : c.secondary, borderRadius: 10 },
+                  ]}
+                >
+                  <Feather
+                    name={row.icon as any}
+                    size={18}
+                    color={row.enabled ? c.primary : c.mutedForeground}
+                  />
+                </View>
+                <View style={styles.rowText}>
+                  <Text
+                    style={[styles.rowLabel, { color: row.enabled ? c.foreground : c.mutedForeground, fontFamily: "Inter_500Medium" }]}
+                  >
+                    {row.label}
+                  </Text>
+                  <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                    {row.sublabel}
+                  </Text>
+                </View>
+                <Switch
+                  value={row.enabled}
+                  onValueChange={row.onToggle}
+                  trackColor={{ false: c.border, true: c.primary }}
+                  thumbColor="#fff"
+                />
+              </View>
+
+              {row.enabled && (
+                <>
+                  <View style={[styles.separator, { backgroundColor: c.border }]} />
+                  <TouchableOpacity
+                    style={styles.notifTimeRow}
+                    onPress={() => setActivePicker(activePicker === row.key ? null : row.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Feather name="clock" size={15} color={c.primary} />
+                    <Text style={[styles.notifTimeLabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                      Notification at
+                    </Text>
+                    <View
+                      style={[
+                        styles.timePill,
+                        { backgroundColor: activePicker === row.key ? c.primary : c.secondary, borderRadius: 16 },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.timeText,
+                          { color: activePicker === row.key ? c.primaryForeground : c.primary, fontFamily: "Inter_600SemiBold" },
+                        ]}
+                      >
+                        {formatTime(row.time.hour, row.time.minute)}
+                      </Text>
+                    </View>
+                    <Feather
+                      name={activePicker === row.key ? "chevron-up" : "chevron-down"}
+                      size={14}
+                      color={c.mutedForeground}
+                    />
+                  </TouchableOpacity>
+
+                  {Platform.OS === "ios" && activePicker === row.key && (
+                    <View
+                      style={[
+                        styles.iosPicker,
+                        { backgroundColor: c.card, borderColor: c.border, borderRadius: 0, marginTop: 0, borderTopWidth: 0 },
+                      ]}
+                    >
+                      <DateTimePicker
+                        value={currentPickerValue}
+                        mode="time"
+                        display="spinner"
+                        onChange={handlePickerChange}
+                        textColor={c.foreground}
+                      />
+                      <TouchableOpacity
+                        onPress={() => setActivePicker(null)}
+                        style={[styles.doneBtn, { backgroundColor: c.primary, borderRadius: c.radius }]}
+                      >
+                        <Text style={[styles.doneBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
+                          Done
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
+
+            {idx < rows.length - 1 && (
+              <View style={[styles.separator, { backgroundColor: c.border }]} />
+            )}
+          </View>
+        ))}
+
+        {/* ── TASK DEFAULTS ── */}
+        <Text
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
+        >
+          TASK DEFAULTS
+        </Text>
+
+        <View
+          style={[styles.row, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius, borderWidth: 1, flexDirection: "column", alignItems: "flex-start", gap: 0 }]}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
+            <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+              <Feather name="clock" size={18} color={c.primary} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                Hard Deadline Offset
+              </Text>
+              <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                Default days added after target completion
+              </Text>
+            </View>
+          </View>
+          <View style={styles.chipRow}>
+            {([0, 1, 2, 3, 7] as const).map((days) => {
+              const active = (settings.hardDeadlineOffsetDays ?? 0) === days;
+              return (
+                <TouchableOpacity
+                  key={days}
+                  onPress={() => updateSettings({ hardDeadlineOffsetDays: days })}
+                  style={[styles.chip, { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 }]}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.chipText, { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" }]}>
+                    {days === 0 ? "Same day" : `+${days} day${days > 1 ? "s" : ""}`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* ── PRO MODE ── */}
+        {PRO_MODE_ENABLED && (<>
+        <Text
+          style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
+        >
+          PRO MODE
+        </Text>
+
+        <TouchableOpacity
+          activeOpacity={isSignedIn ? 1 : 0.6}
+          onPress={() => {
+            if (!isSignedIn) {
+              Alert.alert(
+                "Google Sign-in Required",
+                "Please sign in with Google Drive first to enable Pro Mode."
+              );
+            }
+          }}
+          style={[styles.row, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius, borderWidth: 1 }]}
+        >
+          <View
+            style={[
+              styles.iconWrap,
+              { backgroundColor: isSignedIn ? c.primary + "18" : c.secondary, borderRadius: 10 },
+            ]}
+          >
+            <Feather name="zap" size={18} color={isSignedIn ? c.primary : c.mutedForeground} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowLabel, { color: isSignedIn ? c.foreground : c.mutedForeground, fontFamily: "Inter_500Medium" }]}>
+              Pro Mode
+            </Text>
+            <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+              {isSignedIn
+                ? "Enables AI assistant and advanced features"
+                : "Sign in with Google to enable Pro Mode."}
+            </Text>
+          </View>
+          <Switch
+            value={settings.proMode ?? false}
+            onValueChange={(v) => {
+              if (!isSignedIn) {
+                Alert.alert(
+                  "Google Sign-in Required",
+                  "Please sign in with Google Drive first to enable Pro Mode."
+                );
+                return;
+              }
+              updateSettings({ proMode: v });
+            }}
+            disabled={!isSignedIn}
+            trackColor={{ false: c.border, true: c.primary }}
+            thumbColor="#fff"
+          />
+        </TouchableOpacity>
+
+        {/* ── AI ASSISTANT (pro only) ── */}
+        {PRO_MODE_ENABLED && settings.proMode && (
+          <>
+            <Text
+              style={[styles.sectionLabel, { color: c.mutedForeground, fontFamily: "Inter_500Medium", marginTop: 28 }]}
+            >
+              AI ASSISTANT
+            </Text>
+
+            {/* Disclaimer */}
+            <View
+              style={[
+                styles.aiDisclaimer,
+                { backgroundColor: c.primary + "0D", borderColor: c.primary + "33", borderRadius: c.radius },
+              ]}
+            >
+              <Feather name="info" size={14} color={c.primary} style={{ marginTop: 1 }} />
+              <Text style={[styles.aiDisclaimerText, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                Your Assistant requires an active subscription with one of the following AI services: Anthropic (Claude), OpenAI (ChatGPT), Google (Gemini), or OpenRouter. Enter your API key below to get started.
+              </Text>
+            </View>
+
+            {/* Provider selector */}
+            <View
+              style={[styles.row, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius, borderWidth: 1, flexDirection: "column", alignItems: "flex-start", gap: 0 }]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
+                <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+                  <Feather name="zap" size={18} color={c.primary} />
+                </View>
+                <View style={styles.rowText}>
+                  <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                    Provider
+                  </Text>
+                  <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                    Which AI service powers your assistant
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.chipRow}>
+                {(["claude", "openai", "gemini", "openrouter"] as AIProvider[]).map((p) => {
+                  const active = activeProvider === p;
+                  const label =
+                    p === "claude" ? "Claude" :
+                    p === "openai" ? "OpenAI" :
+                    p === "gemini" ? "Gemini" : "OpenRouter";
+                  return (
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => updateSettings({ aiProvider: p, aiModel: DEFAULT_MODEL[p] })}
+                      style={[styles.chip, { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.chipText, { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" }]}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={[styles.separator, { backgroundColor: c.border }]} />
+
+            {/* API Key */}
+            <View
+              style={[
+                styles.row,
+                {
+                  backgroundColor: c.card,
+                  borderColor: c.border,
+                  borderTopLeftRadius: 0,
+                  borderTopRightRadius: 0,
+                  borderBottomLeftRadius: c.radius,
+                  borderBottomRightRadius: c.radius,
+                  borderWidth: 1,
+                  borderTopWidth: 0,
+                  gap: 8,
+                },
+              ]}
+            >
+              <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+                <Feather name="key" size={18} color={c.primary} />
+              </View>
+              <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium", flex: 0, minWidth: 72 }]}>
+                API Key
+              </Text>
+              <TextInput
+                style={[
+                  styles.nameInput,
+                  { color: c.foreground, fontFamily: "Inter_400Regular", borderColor: c.border, borderRadius: 8, backgroundColor: c.secondary },
+                ]}
+                value={localApiKey}
+                onChangeText={setLocalApiKey}
+                onBlur={() => SecureStore.setItemAsync(`popo_apikey_${activeProvider}`, localApiKey)}
+                placeholder="Paste your API key…"
+                placeholderTextColor={c.mutedForeground}
+                secureTextEntry={!showApiKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="done"
+              />
+              <TouchableOpacity
+                onPress={() => setShowApiKey((v) => !v)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Feather name={showApiKey ? "eye-off" : "eye"} size={16} color={c.mutedForeground} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Model selector */}
+            <View
+              style={[styles.row, { backgroundColor: c.card, borderColor: c.border, borderRadius: c.radius, borderWidth: 1, flexDirection: "column", alignItems: "flex-start", gap: 0, marginTop: 8 }]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12, width: "100%" }}>
+                <View style={[styles.iconWrap, { backgroundColor: c.primary + "18", borderRadius: 10 }]}>
+                  <Feather name="cpu" size={18} color={c.primary} />
+                </View>
+                <View style={styles.rowText}>
+                  <Text style={[styles.rowLabel, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                    Model
+                  </Text>
+                  <Text style={[styles.rowSublabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                    Faster models cost less; smarter models reason better
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.chipRow}>
+                {PROVIDER_MODELS[activeProvider].map((m) => {
+                  const active = (settings.aiModel ?? DEFAULT_MODEL[activeProvider]) === m.id;
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      onPress={() => updateSettings({ aiModel: m.id })}
+                      style={[styles.chip, { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 5 }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.chipText, { color: active ? c.primaryForeground : c.foreground, fontFamily: "Inter_500Medium" }]}>
+                        {m.label}
+                      </Text>
+                      {m.free && (
+                        <View style={[styles.freeBadge, { backgroundColor: active ? "rgba(255,255,255,0.25)" : c.primary + "22" }]}>
+                          <Text style={[styles.freeBadgeText, { color: active ? c.primaryForeground : c.primary, fontFamily: "Inter_600SemiBold" }]}>
+                            FREE
+                          </Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {activeProvider === "openrouter" && (
+              <Text style={[styles.aiProviderNote, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+                Get a free API key at openrouter.ai — free models have no cost, paid models are billed per token.
+              </Text>
+            )}
+          </>
+        )}
+        </>)}
+
+        <Text style={[styles.footerNote, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
           Notifications require permission to be granted on your device. Changes take effect immediately.
         </Text>
       </ScrollView>
@@ -952,6 +947,20 @@ const styles = StyleSheet.create({
   },
   separator: { height: StyleSheet.hairlineWidth },
   iconWrap: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  notifToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    gap: 12,
+  },
+  notifTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    gap: 10,
+  },
+  notifTimeLabel: { flex: 1, fontSize: 13 },
   rowText: { flex: 1, gap: 2 },
   rowLabel: { fontSize: 15 },
   rowSublabel: { fontSize: 12, lineHeight: 16 },
@@ -1000,17 +1009,12 @@ const styles = StyleSheet.create({
   freeBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 6 },
   freeBadgeText: { fontSize: 9, letterSpacing: 0.4 },
   aiProviderNote: { fontSize: 12, lineHeight: 17, marginTop: 6, paddingHorizontal: 2 },
-  debugBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    paddingVertical: 13,
-    marginTop: 20,
-  },
-  debugBtnText: { fontSize: 14 },
+  aiDisclaimer: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1, padding: 12, marginBottom: 12 },
+  aiDisclaimerText: { flex: 1, fontSize: 12, lineHeight: 18 },
+  feedbackCard: { borderWidth: 1, padding: 14, gap: 10 },
+  feedbackDesc: { fontSize: 13, lineHeight: 18 },
+  feedbackBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 11 },
+  feedbackBtnText: { fontSize: 14 },
   // Google Drive styles
   driveBtn: {
     flexDirection: "row",

@@ -14,6 +14,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { IntroductionModal } from "@/components/IntroductionModal";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { GoogleAuthProvider } from "@/context/GoogleAuthContext";
 import { SettingsProvider, useSettings } from "@/context/SettingsContext";
@@ -28,18 +29,25 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-async function setupNotifications() {
-  const granted = await requestNotificationPermissions();
-  if (granted) {
-    await scheduleDailyReminders();
-  }
-}
-
-setupNotifications();
-
 function AppShell() {
-  const { settings, isSettingsLoaded } = useSettings();
+  const { settings, isSettingsLoaded, introVisible, closeIntroduction } = useSettings();
   useVoiceAnnouncement();
+
+  useEffect(() => {
+    if (!isSettingsLoaded) return;
+    requestNotificationPermissions().then((granted) => {
+      if (!granted) return;
+      scheduleDailyReminders({
+        morning: settings.morningNotification,
+        afternoon: settings.afternoonNotification,
+        evening: settings.eveningNotification,
+        morningEnabled: settings.morningEnabled !== false,
+        afternoonEnabled: settings.afternoonEnabled !== false,
+        eveningEnabled: settings.eveningEnabled !== false,
+      });
+    });
+  }, [isSettingsLoaded]);
+
   return (
     <>
       <Stack>
@@ -60,6 +68,7 @@ function AppShell() {
         />
       </Stack>
       <OnboardingModal visible={isSettingsLoaded && !settings.onboardingComplete} />
+      <IntroductionModal visible={introVisible} onClose={closeIntroduction} />
     </>
   );
 }

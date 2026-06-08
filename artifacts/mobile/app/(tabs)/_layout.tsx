@@ -9,6 +9,8 @@ import { Platform, StyleSheet, TouchableOpacity, View, useColorScheme } from "re
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useColors } from "@/hooks/useColors";
+import { useSettings } from "@/context/SettingsContext";
+import { PRO_MODE_ENABLED } from "@/constants/buildConfig";
 
 function NativeTabLayout() {
   return (
@@ -107,25 +109,28 @@ function ClassicTabLayout() {
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const c = useColors();
+  const { settings } = useSettings();
 
   const tabContent = isLiquidGlassAvailable() ? <NativeTabLayout /> : <ClassicTabLayout />;
 
   return (
     <View style={styles.root}>
       {tabContent}
-      <TouchableOpacity
-        onPress={() => router.push("/popo")}
-        activeOpacity={0.85}
-        style={[
-          styles.fab,
-          {
-            bottom: insets.bottom + 64,
-            backgroundColor: c.primary,
-          },
-        ]}
-      >
-        <Ionicons name="sparkles" size={24} color={c.primaryForeground} />
-      </TouchableOpacity>
+      {PRO_MODE_ENABLED && settings.proMode && !!settings.googleUserEmail && (
+        <TouchableOpacity
+          onPress={() => router.push("/popo")}
+          activeOpacity={0.85}
+          style={[
+            styles.fab,
+            {
+              bottom: insets.bottom + 64,
+              backgroundColor: c.primary,
+            },
+          ]}
+        >
+          <Ionicons name="sparkles" size={24} color={c.primaryForeground} />
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

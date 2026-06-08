@@ -26,10 +26,12 @@ import { useColors } from "@/hooks/useColors";
 import { Task } from "@/types/task";
 import { AppSettings, AIProvider } from "@/types/settings";
 import { callAI, ChatMessage, DEFAULT_MODEL } from "@/utils/aiProvider";
+import { submitFeedback } from "@/utils/feedback";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
 type PopoState = "idle" | "listening" | "thinking" | "talking";
+type FeedbackPhase = "none" | "asking" | "confirming";
 
 type AddTaskAction = {
   type: "add_task";
@@ -41,7 +43,9 @@ type AddTaskAction = {
 };
 type CompleteTaskAction = { type: "complete_task"; description: string };
 type DeleteTaskAction = { type: "delete_task"; description: string };
-type PopoAction = AddTaskAction | CompleteTaskAction | DeleteTaskAction;
+type UpdateTaskDetailsAction = { type: "update_task_details"; description: string; details: string };
+type MarkImportantAction = { type: "mark_important"; description: string; important?: boolean };
+type PopoAction = AddTaskAction | CompleteTaskAction | DeleteTaskAction | UpdateTaskDetailsAction | MarkImportantAction;
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -65,8 +69,13 @@ function parseAction(raw: string): { displayText: string; action: PopoAction | n
 }
 
 function isAffirmative(t: string) {
-  return /^(yes|yeah|yep|yup|sure|ok|okay|do it|sounds good|go ahead|please|correct|right|add it|confirm)$/i.test(
-    t.trim()
+  // Strip trailing punctuation so STT output like "yes." or "yeah!" still matches.
+  const normalized = t.trim().replace(/[.,!?]+$/, "");
+  // Any utterance starting with "yes" or "yeah" counts — covers "yes do it",
+  // "yes please", "yes go ahead", "yeah add it", etc.
+  if (/^(yes|yeah)\b/i.test(normalized)) return true;
+  return /^(yep|yep do it|yup|sure|ok|okay|do it|just do it|send it|go ahead|go for it|sounds good|perfect|great|absolutely|definitely|of course|please|correct|right|that'?s right|that'?s correct|add it|add that|create it|create that|make it|confirm)$/i.test(
+    normalized
   );
 }
 
@@ -74,11 +83,32 @@ function isNegative(t: string) {
   return /^(no|nope|nah|cancel|skip|stop|don'?t|never|forget it|never ?mind)$/i.test(t.trim());
 }
 
+function isClosingRemark(text: string): boolean {
+  const t = text.toLowerCase().trim().replace(/[.,!?]+$/, "");
+  const phrases = [
+    "that's all", "thats all", "nothing more", "thank you", "thanks",
+    "bye", "goodbye", "that's it", "thats it", "all done",
+    "that should be all", "no more", "i'm done", "im done",
+  ];
+  return phrases.some((p) => t === p || t.startsWith(p + " ") || t.endsWith(" " + p));
+}
+
 function actionLabel(action: PopoAction): string {
-  if (action.type === "add_task") return `Add: "${action.description}"`;
-  if (action.type === "complete_task") return `Complete: "${action.description}"`;
-  if (action.type === "delete_task") return `Delete: "${action.description}"`;
+  if (action.type === "add_task") return `Add task: ${action.description}`;
+  if (action.type === "complete_task") return `Complete: ${action.description}`;
+  if (action.type === "delete_task") return `Delete: ${action.description}`;
+  if (action.type === "update_task_details") return `Update details: ${action.description}`;
+  if (action.type === "mark_important") return `Mark as important: ${action.description}`;
   return "Perform action";
+}
+
+function fallbackActionText(action: PopoAction): string {
+  if (action.type === "add_task") return `I'll add "${action.description}" to your tasks.`;
+  if (action.type === "complete_task") return `I'll mark "${action.description}" as complete.`;
+  if (action.type === "delete_task") return `I'll delete "${action.description}".`;
+  if (action.type === "update_task_details") return `I'll update the details for "${action.description}".`;
+  if (action.type === "mark_important") return `I'll mark "${action.description}" as important.`;
+  return "Got it.";
 }
 
 function resolveTask(tasks: Task[], description: string): Task | undefined {
@@ -100,8 +130,14 @@ function randomGreeting(name: string): string {
   return opts[Math.floor(Math.random() * opts.length)];
 }
 
+function localDateKey(date: Date): string {
+  // Returns "YYYY-MM-DD" in the device's local timezone for day-boundary comparisons.
+  return date.toLocaleDateString("en-CA"); // en-CA gives ISO-style YYYY-MM-DD
+}
+
 function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
   const now = new Date();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const dateStr = now.toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
@@ -117,8 +153,25 @@ function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
   const name = settings.userName || "User";
   const assistant = settings.assistantName || "Popo";
 
+  // Local-timezone day boundaries
+  const todayKey = localDateKey(now);
+  const tomorrowDate = new Date(now);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowKey = localDateKey(tomorrowDate);
+  const weekLimitDate = new Date(now);
+  weekLimitDate.setDate(weekLimitDate.getDate() + 7);
+  weekLimitDate.setHours(23, 59, 59, 999);
+
   const pending = tasks.filter((t) => !t.isCompleted);
   const completed = tasks.filter((t) => t.isCompleted);
+
+  function taskBucket(t: Task): "today" | "tomorrow" | "thisWeek" | "later" {
+    const key = localDateKey(new Date(t.targetDate));
+    if (key === todayKey) return "today";
+    if (key === tomorrowKey) return "tomorrow";
+    if (new Date(t.targetDate) <= weekLimitDate) return "thisWeek";
+    return "later";
+  }
 
   function fmtTime(iso: string) {
     return new Date(iso).toLocaleString("en-US", {
@@ -135,7 +188,7 @@ function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
     const when = fmtTime(t.targetDate);
     const deadlineDate = new Date(t.hardDeadline);
     const targetDate = new Date(t.targetDate);
-    const sameDay = targetDate.toDateString() === deadlineDate.toDateString();
+    const sameDay = localDateKey(targetDate) === localDateKey(deadlineDate);
     const deadlinePart = sameDay
       ? `deadline ${deadlineDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`
       : `deadline ${fmtTime(t.hardDeadline)}`;
@@ -144,7 +197,15 @@ function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
     return `• "${t.description}"${detail} — due ${when}, ${deadlinePart}${flags}`;
   }
 
-  const pendingLines = pending.length === 0 ? "  (none)" : pending.map(taskLine).join("\n");
+  const todayTasks    = pending.filter((t) => taskBucket(t) === "today");
+  const tomorrowTasks = pending.filter((t) => taskBucket(t) === "tomorrow");
+  const weekTasks     = pending.filter((t) => taskBucket(t) === "thisWeek");
+  const laterTasks    = pending.filter((t) => taskBucket(t) === "later");
+
+  function section(label: string, list: Task[]): string {
+    return `== ${label} ==\n${list.length === 0 ? "  (none)" : list.map(taskLine).join("\n")}`;
+  }
+
   const completedLines =
     completed.length === 0 ? "  (none)" : completed.map((t) => `• "${t.description}"`).join("\n");
 
@@ -152,12 +213,18 @@ function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
 
 You are ${assistant}, a warm and friendly personal assistant helping ${name} stay on top of their day. Your responses are read aloud by text-to-speech, so write exactly as you would speak — naturally, warmly, and concisely.
 
-Today is ${dateStr} at ${timeStr}.
+Today is ${dateStr} at ${timeStr} (timezone: ${tz}).
+"Today" means tasks whose target date falls on ${todayKey} in the ${tz} timezone. Do not include tomorrow's or future tasks when summarising today.
 
-== ${name}'s pending tasks ==
-${pendingLines}
+${section(`${name}'s tasks — TODAY`, todayTasks)}
 
-== Completed today ==
+${section("TOMORROW", tomorrowTasks)}
+
+${section("THIS WEEK (next 7 days)", weekTasks)}
+
+${section("LATER", laterTasks)}
+
+== Completed ==
 ${completedLines}
 
 == SPEECH RULES ==
@@ -165,20 +232,46 @@ ${completedLines}
 - Keep every response to 2–3 sentences unless ${name} asks for more detail.
 - Write for the ear: no bullet points, no markdown, no lists — flowing sentences only.
 - Address ${name} by name at most once per response.
+- When summarising "today", only mention tasks in the TODAY section above.
 
 == TONE EXAMPLE ==
 BAD: "Task ID a1b2, targetDate: 2026-06-09T10:00:00, hardDeadline: 2026-06-09T12:00:00, isImportant: false."
 GOOD: "You've got a dentist call Monday morning at 10. Want me to remind you about anything else?"
 
 == ACTIONS ==
+CRITICAL: You MUST always generate an ACTION block for any task modification. Never say you have done something without including the ACTION block. If you claim a task is marked as important, completed, deleted, or updated, you MUST include the corresponding ACTION block or it will not happen.
+
 When suggesting adding a task, end your message with this block on its own line:
   [ACTION: {"type":"add_task","description":"task text","targetDate":"ISO_DATE","hardDeadline":"ISO_DATE","isImportant":false}]
 When suggesting completing a task, end with:
   [ACTION: {"type":"complete_task","description":"exact task title here"}]
 When suggesting deleting a task, end with:
   [ACTION: {"type":"delete_task","description":"exact task title here"}]
+When adding or updating details/notes for an existing task, end with:
+  [ACTION: {"type":"update_task_details","description":"exact task title here","details":"the details text"}]
+When marking a task as important, starring it, or making it high priority, end with:
+  [ACTION: {"type":"mark_important","description":"exact task title here","important":true}]
+When removing importance, unstarring, or marking a task as not important/not high priority, end with:
+  [ACTION: {"type":"mark_important","description":"exact task title here","important":false}]
 ISO_DATE format: 2026-06-08T18:00:00.000Z
-Never show ACTION blocks to ${name} and never put an ID anywhere in your response.`;
+Never show ACTION blocks to ${name} and never put an ID anywhere in your response.
+
+== ACTION EXAMPLES ==
+${name} says "Mark buy newspaper as important"
+→ Say: "Done! I've starred buy newspaper for you."
+→ Include: [ACTION: {"type":"mark_important","description":"buy newspaper","important":true}]
+
+${name} says "Mark visit doctor as not important"
+→ Say: "Done, I've removed the star from visit doctor."
+→ Include: [ACTION: {"type":"mark_important","description":"visit doctor","important":false}]
+
+${name} says "Add a note to my dentist appointment — it's on Oak Street"
+→ Say: "Got it, I've added that note to your dentist appointment."
+→ Include: [ACTION: {"type":"update_task_details","description":"dentist appointment","details":"it's on Oak Street"}]
+
+${name} says "Add milk, eggs, and bread to my grocery run"
+→ Say: "Added your grocery list to that task."
+→ Include: [ACTION: {"type":"update_task_details","description":"grocery run","details":"milk, eggs, bread"}]`;
 }
 
 // ── animations ────────────────────────────────────────────────────────────────
@@ -353,7 +446,7 @@ export default function PopoScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const { settings } = useSettings();
-  const { tasks, addTask, completeTask, deleteTask } = useTasks();
+  const { tasks, addTask, completeTask, deleteTask, updateTask } = useTasks();
 
   const assistantName = settings.assistantName || "Popo";
   const userName = settings.userName || "";
@@ -362,6 +455,8 @@ export default function PopoScreen() {
   const [lastResponse, setLastResponse] = useState("");
   const [liveTranscript, setLiveTranscript] = useState("");
   const [pendingAction, setPendingAction] = useState<PopoAction | null>(null);
+  const [feedbackPhase, setFeedbackPhase] = useState<FeedbackPhase>("none");
+  const [pendingFeedbackText, setPendingFeedbackText] = useState("");
 
   const isMountedRef = useRef(true);
   const isListeningRef = useRef(false);
@@ -371,6 +466,8 @@ export default function PopoScreen() {
   const settingsRef = useRef(settings);
   const tasksRef = useRef(tasks);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackPhaseRef = useRef<FeedbackPhase>("none");
+  const pendingFeedbackRef = useRef("");
 
   settingsRef.current = settings;
   tasksRef.current = tasks;
@@ -397,7 +494,36 @@ export default function PopoScreen() {
     const text = evt.results[0]?.transcript ?? "";
     transcriptRef.current = text;
     setLiveTranscript(text);
-    if (text.length > 0) startSilenceTimer(); // reset timer as speech comes in
+    if (text.length > 0) {
+      if (isClosingRemark(text)) {
+        clearSilenceTimer();
+        if (isListeningRef.current) {
+          ExpoSpeechRecognitionModule.abort();
+          isListeningRef.current = false;
+        }
+        transcriptRef.current = "";
+        setLiveTranscript("");
+        console.log("FEEDBACK: checking if should ask");
+        if (feedbackPhaseRef.current === "none") {
+          feedbackPhaseRef.current = "asking";
+          setFeedbackPhase("asking");
+          const questions = [
+            "Before you go, any thoughts on how I can improve?",
+            "Got a moment? I'd love your feedback on the app.",
+          ];
+          speakText(questions[Math.floor(Math.random() * questions.length)]);
+        } else {
+          const goodbyes = [
+            "Goodbye! Talk to you soon.",
+            "Take care! Let me know if you need anything.",
+            "Goodbye! Have a great day.",
+          ];
+          speakText(goodbyes[Math.floor(Math.random() * goodbyes.length)], handleClose);
+        }
+      } else if (!pendingActionRef.current) {
+        startSilenceTimer(); // reset timer as speech comes in
+      }
+    }
   });
 
   useSpeechRecognitionEvent("end", () => {
@@ -409,12 +535,64 @@ export default function PopoScreen() {
     transcriptRef.current = "";
 
     if (!text) {
-      if (isMountedRef.current) setPopoState("idle");
+      const phase = feedbackPhaseRef.current;
+      if (phase === "none" && historyRef.current.length >= 2) {
+        // Real conversation ended silently — ask for feedback
+        console.log("FEEDBACK CHECK: silent end — asking for feedback");
+        feedbackPhaseRef.current = "asking";
+        setFeedbackPhase("asking");
+        const questions = [
+          "Before you go, any thoughts on how I can improve?",
+          "Got a moment? I'd love your feedback on the app.",
+        ];
+        speakText(questions[Math.floor(Math.random() * questions.length)]);
+      } else if (phase === "asking" || phase === "confirming") {
+        // Silent during the feedback/confirmation question — close gracefully,
+        // no recursive feedback request
+        console.log("FEEDBACK CHECK: silent during", phase, "— closing");
+        feedbackPhaseRef.current = "none";
+        setFeedbackPhase("none");
+        speakText("Alright, goodbye!", handleClose);
+      } else {
+        // No conversation yet (greeting only) or unknown state — stay idle
+        if (isMountedRef.current) setPopoState("idle");
+      }
       return;
     }
 
-    if (pendingActionRef.current) {
+    if (feedbackPhaseRef.current === "asking") {
+      if (!text || isClosingRemark(text) || isNegative(text)) {
+        feedbackPhaseRef.current = "none";
+        setFeedbackPhase("none");
+        speakText("No problem! Goodbye.", handleClose);
+      } else {
+        feedbackPhaseRef.current = "confirming";
+        setFeedbackPhase("confirming");
+        pendingFeedbackRef.current = text;
+        setPendingFeedbackText(text);
+        speakText(`So you're saying ${text} — shall I send that as feedback?`);
+      }
+      return;
+    }
+
+    if (feedbackPhaseRef.current === "confirming") {
       if (isAffirmative(text)) {
+        console.log("[popo] voice confirmation detected:", text, "| state: feedback confirming");
+        handleSendFeedback();
+      } else {
+        feedbackPhaseRef.current = "none";
+        setFeedbackPhase("none");
+        speakText("No problem! Goodbye.", handleClose);
+      }
+      return;
+    }
+
+    console.log("[popo] handleYes called | pendingAction:", JSON.stringify(pendingActionRef.current));
+    if (pendingActionRef.current) {
+      const affirmative = isAffirmative(text);
+      console.log("[popo] isAffirmative result:", affirmative, "| text:", text);
+      if (affirmative) {
+        console.log("[popo] voice confirmation detected:", text, "| state: action pending —", pendingActionRef.current.type);
         executeAction(pendingActionRef.current);
         return;
       }
@@ -457,13 +635,21 @@ export default function PopoScreen() {
       ExpoSpeechRecognitionModule.abort();
       isListeningRef.current = false;
     }
-    const goodbyes = [
-      "Alright, let me know if you need anything!",
-      "Got it, talk soon!",
-      "Okay, I'm here if you need me!",
-    ];
-    const farewell = goodbyes[Math.floor(Math.random() * goodbyes.length)];
-    speakText(farewell, handleClose);
+    if (feedbackPhaseRef.current === "none" && historyRef.current.length >= 2) {
+      console.log("FEEDBACK: checking if should ask — asking");
+      feedbackPhaseRef.current = "asking";
+      setFeedbackPhase("asking");
+      const questions = [
+        "Before you go, any thoughts on how I can improve?",
+        "Got a moment? I'd love your feedback on the app.",
+      ];
+      speakText(questions[Math.floor(Math.random() * questions.length)]);
+    } else {
+      // No conversation yet, or already in a feedback phase — just close
+      feedbackPhaseRef.current = "none";
+      setFeedbackPhase("none");
+      speakText("Alright, goodbye!", handleClose);
+    }
   }
 
   // ── core functions ────────────────────────────────────────────────────────
@@ -476,8 +662,32 @@ export default function PopoScreen() {
       language: "en-US",
       onDone: () => {
         if (!isMountedRef.current) return;
-        if (onDone) onDone();
-        else beginListening();
+        const feedbackEligible =
+          !onDone &&
+          feedbackPhaseRef.current === "none" &&
+          historyRef.current.length >= 2;
+        console.log(
+          "FEEDBACK CHECK: TTS done | phase:", feedbackPhaseRef.current,
+          "| history:", historyRef.current.length,
+          "| eligible:", feedbackEligible
+        );
+        if (onDone) {
+          onDone();
+        } else if (pendingActionRef.current) {
+          // Stop any lingering audio then wait 300ms before the confirmation cue
+          // to guarantee clean separation between the main response and this prompt.
+          Speech.stop();
+          setTimeout(() => {
+            if (!isMountedRef.current) return;
+            Speech.speak("Just say yes to confirm.", {
+              language: "en-US",
+              onDone:  () => { if (isMountedRef.current) beginListening(); },
+              onError: () => { if (isMountedRef.current) beginListening(); },
+            });
+          }, 300);
+        } else {
+          beginListening();
+        }
       },
       onError: () => { if (isMountedRef.current) setPopoState("idle"); },
     });
@@ -495,7 +705,11 @@ export default function PopoScreen() {
       }
       isListeningRef.current = true;
       ExpoSpeechRecognitionModule.start({ lang: "en-US", interimResults: true, continuous: false });
-      startSilenceTimer();
+      if (pendingActionRef.current) {
+        console.log("[popo] silence timer skipped — waiting for action confirmation");
+      } else {
+        startSilenceTimer();
+      }
     });
   }
 
@@ -530,6 +744,29 @@ export default function PopoScreen() {
     if (speak) speakText("Okay, I won't do that.");
   }
 
+  // ── feedback ──────────────────────────────────────────────────────────────
+
+  async function handleSendFeedback() {
+    feedbackPhaseRef.current = "none";
+    setFeedbackPhase("none");
+    const email = settingsRef.current.googleUserEmail || "Not signed in";
+    const accessToken = settingsRef.current.googleAccessToken;
+    console.log("[popo] submitting feedback:", pendingFeedbackRef.current, "| email:", email, "| hasToken:", !!accessToken);
+
+    if (!accessToken) {
+      console.warn("[popo] no access token — cannot write to Sheets");
+      if (isMountedRef.current) speakText("Thanks! Unfortunately I couldn't save your feedback — please sign in to Google Drive first.", handleClose);
+      return;
+    }
+
+    try {
+      await submitFeedback(pendingFeedbackRef.current, email, accessToken);
+    } catch (e) {
+      console.error("[popo] feedback submission error:", e);
+    }
+    if (isMountedRef.current) speakText("Thanks! Your feedback has been sent.", handleClose);
+  }
+
   // ── AI ────────────────────────────────────────────────────────────────────
 
   async function sendToAI(text: string) {
@@ -556,7 +793,7 @@ export default function PopoScreen() {
       if (!isMountedRef.current) return;
 
       const { displayText, action } = parseAction(raw);
-      const responseText = displayText || raw.trim();
+      const responseText = displayText || (action ? fallbackActionText(action) : raw.trim());
       historyRef.current.push({ role: "assistant", content: responseText });
 
       if (action) {
@@ -566,7 +803,6 @@ export default function PopoScreen() {
         pendingActionRef.current = null;
         setPendingAction(null);
       }
-
       speakText(responseText);
     } catch (e: any) {
       if (!isMountedRef.current) return;
@@ -578,6 +814,7 @@ export default function PopoScreen() {
   }
 
   async function executeAction(action: PopoAction) {
+    console.log("[popo] executeAction called | action:", JSON.stringify(action));
     pendingActionRef.current = null;
     setPendingAction(null);
     setPopoState("thinking");
@@ -585,26 +822,49 @@ export default function PopoScreen() {
     try {
       if (action.type === "add_task") {
         const now = new Date();
-        await addTask({
+        const newTask = {
           description: action.description,
           detail: action.detail,
           targetDate: action.targetDate || new Date(now.getTime() + 3_600_000).toISOString(),
           hardDeadline: action.hardDeadline || new Date(now.getTime() + 10_800_000).toISOString(),
           isImportant: action.isImportant ?? false,
-        });
+        };
+        console.log("[popo] addTask called | task:", JSON.stringify(newTask));
+        await addTask(newTask);
+        console.log("[popo] add_task completed:", action.description);
         speakText(`Done! I've added "${action.description}" to your tasks.`);
       } else if (action.type === "complete_task") {
         const target = resolveTask(tasksRef.current, action.description);
-        if (!target) throw new Error("Task not found");
+        if (!target) throw new Error(`Task not found: "${action.description}"`);
         await completeTask(target.id);
+        console.log("[popo] complete_task completed:", target.description);
         speakText(`Done! "${target.description}" is marked complete.`);
       } else if (action.type === "delete_task") {
         const target = resolveTask(tasksRef.current, action.description);
-        if (!target) throw new Error("Task not found");
+        if (!target) throw new Error(`Task not found: "${action.description}"`);
         await deleteTask(target.id);
+        console.log("[popo] delete_task completed:", target.description);
         speakText(`Deleted "${target.description}".`);
+      } else if (action.type === "update_task_details") {
+        const target = resolveTask(tasksRef.current, action.description);
+        if (!target) throw new Error(`Task not found: "${action.description}"`);
+        await updateTask(target.id, { detail: action.details });
+        console.log("[popo] update_task_details completed:", target.description);
+        speakText(`Done! I've added the details to "${target.description}".`);
+      } else if (action.type === "mark_important") {
+        const important = action.important !== false;
+        console.log(`[popo] updating importance: ${action.description} → ${important}`);
+        const target = resolveTask(tasksRef.current, action.description);
+        if (!target) throw new Error(`Task not found: "${action.description}"`);
+        await updateTask(target.id, { isImportant: important });
+        console.log("[popo] mark_important completed:", target.description, "→", important);
+        speakText(important
+          ? `Done! "${target.description}" is now marked as important.`
+          : `Done! I've removed the star from "${target.description}".`
+        );
       }
-    } catch {
+    } catch (e) {
+      console.error("[popo] executeAction error:", e);
       if (isMountedRef.current) speakText("Sorry, I couldn't complete that action. Please try again.");
     }
   }
@@ -711,6 +971,47 @@ export default function PopoScreen() {
         </View>
       )}
 
+      {/* Feedback confirmation */}
+      {feedbackPhase === "confirming" && (
+        <View style={[styles.actionArea, { borderTopColor: c.border }]}>
+          <Text style={[styles.actionCaption, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+            Send this feedback?
+          </Text>
+          <Text
+            style={[styles.feedbackQuote, { color: c.foreground, fontFamily: "Inter_400Regular" }]}
+            numberOfLines={3}
+          >
+            "{pendingFeedbackText}"
+          </Text>
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              onPress={handleSendFeedback}
+              style={[styles.actionBtn, { backgroundColor: c.primary, borderRadius: 14 }]}
+              activeOpacity={0.8}
+            >
+              <Feather name="send" size={16} color={c.primaryForeground} />
+              <Text style={[styles.actionBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
+                Yes, send it
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                feedbackPhaseRef.current = "none";
+                setFeedbackPhase("none");
+                speakText("No problem! Goodbye.", handleClose);
+              }}
+              style={[styles.actionBtn, { backgroundColor: c.secondary, borderRadius: 14 }]}
+              activeOpacity={0.8}
+            >
+              <Feather name="x" size={16} color={c.foreground} />
+              <Text style={[styles.actionBtnText, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                No thanks
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <View style={{ height: insets.bottom + 20 }} />
     </View>
   );
@@ -779,6 +1080,13 @@ const styles = StyleSheet.create({
   actionCaption: {
     fontSize: 13,
     textAlign: "center",
+  },
+  feedbackQuote: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    fontStyle: "italic",
+    opacity: 0.8,
   },
   actionRow: {
     flexDirection: "row",

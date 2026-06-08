@@ -85,14 +85,6 @@ export function TaskCard({ task, onComplete, onPress }: TaskCardProps) {
 
           <View style={styles.content}>
             <View style={styles.descRow}>
-              {!!task.isImportant && !task.isCompleted && (
-                <Feather
-                  name="star"
-                  size={13}
-                  color="#F59E0B"
-                  style={styles.starIcon}
-                />
-              )}
               <Text
                 style={[
                   styles.description,
@@ -162,6 +154,12 @@ export function TaskCard({ task, onComplete, onPress }: TaskCardProps) {
             </View>
           </View>
 
+          {!!task.isImportant && !task.isCompleted && (
+            <View style={styles.importantBadge}>
+              <Feather name="star" size={17} color="#F59E0B" />
+            </View>
+          )}
+
           <TouchableOpacity
             onPress={handleComplete}
             style={[
@@ -210,8 +208,13 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 5,
   },
-  starIcon: {
-    marginTop: 3,
+  importantBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F59E0B1A",
+    alignItems: "center",
+    justifyContent: "center",
   },
   description: {
     fontSize: 15,

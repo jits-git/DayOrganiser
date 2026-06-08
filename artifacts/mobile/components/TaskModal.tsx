@@ -319,33 +319,46 @@ export function TaskModal({ visible, task, initialDate, prefilled, onClose }: Ta
 
           <TouchableOpacity
             onPress={() => setIsImportant((v) => !v)}
-            activeOpacity={0.7}
+            activeOpacity={0.75}
             style={[
               styles.importanceBtn,
               {
-                backgroundColor: isImportant ? "#F59E0B18" : c.secondary,
-                borderColor: isImportant ? "#F59E0B" : "transparent",
+                backgroundColor: isImportant ? "#F59E0B22" : c.secondary,
+                borderColor: isImportant ? "#F59E0B99" : c.border,
                 borderRadius: c.radius,
                 marginTop: 20,
               },
             ]}
           >
-            <Feather
-              name="star"
-              size={16}
-              color={isImportant ? "#F59E0B" : c.mutedForeground}
-            />
+            <View
+              style={[
+                styles.importanceStarWrap,
+                {
+                  backgroundColor: isImportant ? "#F59E0B22" : c.background,
+                  borderRadius: 20,
+                },
+              ]}
+            >
+              <Feather
+                name="star"
+                size={22}
+                color={isImportant ? "#F59E0B" : c.mutedForeground}
+              />
+            </View>
             <Text
               style={[
                 styles.importanceBtnText,
                 {
-                  color: isImportant ? "#F59E0B" : c.mutedForeground,
-                  fontFamily: "Inter_500Medium",
+                  color: isImportant ? "#D97706" : c.mutedForeground,
+                  fontFamily: isImportant ? "Inter_700Bold" : "Inter_500Medium",
                 },
               ]}
             >
-              {isImportant ? "Important" : "Mark as important"}
+              Important
             </Text>
+            {isImportant && (
+              <View style={styles.importanceActiveDot} />
+            )}
           </TouchableOpacity>
 
           <Text
@@ -630,11 +643,22 @@ const styles = StyleSheet.create({
   importanceBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    alignSelf: "flex-start",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
   },
-  importanceBtnText: { fontSize: 14 },
+  importanceStarWrap: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  importanceBtnText: { fontSize: 16, flex: 1 },
+  importanceActiveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#F59E0B",
+  },
 });

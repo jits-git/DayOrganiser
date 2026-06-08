@@ -67,7 +67,10 @@ export function buildSummary(tasks: Task[], settings: AppSettings): string {
     (t) => t.isImportant && new Date(t.hardDeadline) < now
   );
   const importantAhead = active.filter(
-    (t) => t.isImportant && new Date(t.hardDeadline) >= now
+    (t) =>
+      t.isImportant &&
+      new Date(t.hardDeadline) >= now &&
+      (isSameDay(new Date(t.targetDate), now) || isSameDay(new Date(t.hardDeadline), now))
   );
   const incompleteToday = active.filter(
     (t) =>

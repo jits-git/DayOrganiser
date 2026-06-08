@@ -49,6 +49,9 @@ interface DailyTimes {
   morning?: { hour: number; minute: number };
   afternoon?: { hour: number; minute: number };
   evening?: { hour: number; minute: number };
+  morningEnabled?: boolean;
+  afternoonEnabled?: boolean;
+  eveningEnabled?: boolean;
 }
 
 export async function scheduleDailyReminders(
@@ -58,56 +61,62 @@ export async function scheduleDailyReminders(
   const morning = times.morning ?? { hour: 7, minute: 0 };
   const afternoon = times.afternoon ?? { hour: 13, minute: 0 };
   const evening = times.evening ?? { hour: 22, minute: 0 };
+  const mEnabled = times.morningEnabled !== false;
+  const aEnabled = times.afternoonEnabled !== false;
+  const eEnabled = times.eveningEnabled !== false;
 
   try {
     await N.cancelScheduledNotificationAsync(DAILY_MORNING_ID).catch(() => {});
     await N.cancelScheduledNotificationAsync(DAILY_MIDDAY_ID).catch(() => {});
     await N.cancelScheduledNotificationAsync(DAILY_EVENING_ID).catch(() => {});
 
-    await N.scheduleNotificationAsync({
-      identifier: DAILY_MORNING_ID,
-      content: {
-        title: "Good morning",
-        body: "Check your tasks and deadlines for today.",
-        sound: true,
-      },
-      trigger: {
-        type: N.SchedulableTriggerInputTypes.CALENDAR,
-        hour: morning.hour,
-        minute: morning.minute,
-        repeats: true,
-      },
-    });
+    if (mEnabled) {
+      await N.scheduleNotificationAsync({
+        identifier: DAILY_MORNING_ID,
+        content: {
+          title: "Good morning",
+          body: "Check your tasks and deadlines for today.",
+          sound: true,
+        },
+        trigger: {
+          type: N.SchedulableTriggerInputTypes.DAILY,
+          hour: morning.hour,
+          minute: morning.minute,
+        },
+      });
+    }
 
-    await N.scheduleNotificationAsync({
-      identifier: DAILY_MIDDAY_ID,
-      content: {
-        title: "Midday check-in",
-        body: "How are your tasks going? Stay on track.",
-        sound: true,
-      },
-      trigger: {
-        type: N.SchedulableTriggerInputTypes.CALENDAR,
-        hour: afternoon.hour,
-        minute: afternoon.minute,
-        repeats: true,
-      },
-    });
+    if (aEnabled) {
+      await N.scheduleNotificationAsync({
+        identifier: DAILY_MIDDAY_ID,
+        content: {
+          title: "Midday check-in",
+          body: "How are your tasks going? Stay on track.",
+          sound: true,
+        },
+        trigger: {
+          type: N.SchedulableTriggerInputTypes.DAILY,
+          hour: afternoon.hour,
+          minute: afternoon.minute,
+        },
+      });
+    }
 
-    await N.scheduleNotificationAsync({
-      identifier: DAILY_EVENING_ID,
-      content: {
-        title: "Evening wrap-up",
-        body: "Review what you completed and what is left for today.",
-        sound: true,
-      },
-      trigger: {
-        type: N.SchedulableTriggerInputTypes.CALENDAR,
-        hour: evening.hour,
-        minute: evening.minute,
-        repeats: true,
-      },
-    });
+    if (eEnabled) {
+      await N.scheduleNotificationAsync({
+        identifier: DAILY_EVENING_ID,
+        content: {
+          title: "Evening wrap-up",
+          body: "Review what you completed and what is left for today.",
+          sound: true,
+        },
+        trigger: {
+          type: N.SchedulableTriggerInputTypes.DAILY,
+          hour: evening.hour,
+          minute: evening.minute,
+        },
+      });
+    }
   } catch {}
 }
 

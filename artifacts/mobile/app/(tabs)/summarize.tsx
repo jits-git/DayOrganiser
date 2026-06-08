@@ -121,7 +121,10 @@ export default function SummarizeScreen() {
         (t) => t.isImportant && new Date(t.hardDeadline) < now
       ),
       importantAhead: active.filter(
-        (t) => t.isImportant && new Date(t.hardDeadline) >= now
+        (t) =>
+          t.isImportant &&
+          new Date(t.hardDeadline) >= now &&
+          (isSameDay(new Date(t.targetDate), now) || isSameDay(new Date(t.hardDeadline), now))
       ),
       incompleteToday: active.filter(
         (t) =>
