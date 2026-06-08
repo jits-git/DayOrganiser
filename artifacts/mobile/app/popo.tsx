@@ -6,18 +6,18 @@ import {
 import * as SecureStore from "expo-secure-store";
 import * as Speech from "expo-speech";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useSettings } from "@/context/SettingsContext";
@@ -28,6 +28,8 @@ import { AppSettings, AIProvider } from "@/types/settings";
 import { callAI, ChatMessage, DEFAULT_MODEL } from "@/utils/aiProvider";
 
 // ── types ─────────────────────────────────────────────────────────────────────
+
+type PopoState = "idle" | "listening" | "thinking" | "talking";
 
 type AddTaskAction = {
   type: "add_task";
@@ -41,35 +43,61 @@ type CompleteTaskAction = { type: "complete_task"; description: string };
 type DeleteTaskAction = { type: "delete_task"; description: string };
 type PopoAction = AddTaskAction | CompleteTaskAction | DeleteTaskAction;
 
-interface PopoMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  action?: PopoAction;
-  actionResolved?: boolean;
-}
+// ── constants ─────────────────────────────────────────────────────────────────
+
+const ACTION_REGEX = /\[ACTION:\s*(\{[\s\S]*?\})\s*\]/;
+const CORE_SIZE = 84;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const ACTION_REGEX = /\[ACTION:\s*(\{[\s\S]*?\})\s*\]/;
-
-function secureKey(provider: AIProvider): string {
-  return `popo_apikey_${provider}`;
-}
-
-function makeId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+function secureKey(p: AIProvider) {
+  return `popo_apikey_${p}`;
 }
 
 function parseAction(raw: string): { displayText: string; action: PopoAction | null } {
   const match = raw.match(ACTION_REGEX);
   if (!match) return { displayText: raw.trim(), action: null };
   try {
-    const action = JSON.parse(match[1]) as PopoAction;
-    return { displayText: raw.replace(ACTION_REGEX, "").trim(), action };
+    return { displayText: raw.replace(ACTION_REGEX, "").trim(), action: JSON.parse(match[1]) as PopoAction };
   } catch {
     return { displayText: raw.trim(), action: null };
   }
+}
+
+function isAffirmative(t: string) {
+  return /^(yes|yeah|yep|yup|sure|ok|okay|do it|sounds good|go ahead|please|correct|right|add it|confirm)$/i.test(
+    t.trim()
+  );
+}
+
+function isNegative(t: string) {
+  return /^(no|nope|nah|cancel|skip|stop|don'?t|never|forget it|never ?mind)$/i.test(t.trim());
+}
+
+function actionLabel(action: PopoAction): string {
+  if (action.type === "add_task") return `Add: "${action.description}"`;
+  if (action.type === "complete_task") return `Complete: "${action.description}"`;
+  if (action.type === "delete_task") return `Delete: "${action.description}"`;
+  return "Perform action";
+}
+
+function resolveTask(tasks: Task[], description: string): Task | undefined {
+  const n = description.toLowerCase().trim();
+  return (
+    tasks.find((t) => t.description.toLowerCase() === n) ??
+    tasks.find((t) => t.description.toLowerCase().includes(n)) ??
+    tasks.find((t) => n.includes(t.description.toLowerCase()))
+  );
+}
+
+function randomGreeting(name: string): string {
+  const opts = [
+    "How can I help you today?",
+    "What can I do for you?",
+    "What would you like to do?",
+    ...(name ? [`What's on your mind, ${name}?`, `Hi ${name}! What do you need?`] : []),
+  ];
+  return opts[Math.floor(Math.random() * opts.length)];
 }
 
 function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
@@ -103,27 +131,22 @@ function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
     });
   }
 
-  function taskSummaryLine(t: Task): string {
+  function taskLine(t: Task): string {
     const when = fmtTime(t.targetDate);
-    const deadline = fmtTime(t.hardDeadline);
-    const sameDay = new Date(t.targetDate).toDateString() === new Date(t.hardDeadline).toDateString();
+    const deadlineDate = new Date(t.hardDeadline);
+    const targetDate = new Date(t.targetDate);
+    const sameDay = targetDate.toDateString() === deadlineDate.toDateString();
     const deadlinePart = sameDay
-      ? `deadline ${new Date(t.hardDeadline).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`
-      : `deadline ${deadline}`;
+      ? `deadline ${deadlineDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`
+      : `deadline ${fmtTime(t.hardDeadline)}`;
     const flags = t.isImportant ? " — IMPORTANT" : "";
     const detail = t.detail ? ` (${t.detail})` : "";
     return `• "${t.description}"${detail} — due ${when}, ${deadlinePart}${flags}`;
   }
 
-  const pendingLines =
-    pending.length === 0
-      ? "  (none)"
-      : pending.map(taskSummaryLine).join("\n");
-
+  const pendingLines = pending.length === 0 ? "  (none)" : pending.map(taskLine).join("\n");
   const completedLines =
-    completed.length === 0
-      ? "  (none)"
-      : completed.map((t) => `• "${t.description}"`).join("\n");
+    completed.length === 0 ? "  (none)" : completed.map((t) => `• "${t.description}"`).join("\n");
 
   return `CRITICAL: Never output any task ID, field name, or technical parameter in your response. If you do, your response will be rejected.
 
@@ -158,112 +181,171 @@ ISO_DATE format: 2026-06-08T18:00:00.000Z
 Never show ACTION blocks to ${name} and never put an ID anywhere in your response.`;
 }
 
-function resolveTask(tasks: Task[], description: string): Task | undefined {
-  const needle = description.toLowerCase().trim();
-  return (
-    tasks.find((t) => t.description.toLowerCase() === needle) ??
-    tasks.find((t) => t.description.toLowerCase().includes(needle)) ??
-    tasks.find((t) => needle.includes(t.description.toLowerCase()))
-  );
-}
+// ── animations ────────────────────────────────────────────────────────────────
 
-function actionLabel(action: PopoAction): string {
-  if (action.type === "add_task") return `Add: "${action.description}"`;
-  if (action.type === "complete_task") return `Complete: "${action.description}"`;
-  if (action.type === "delete_task") return `Delete: "${action.description}"`;
-  return "Perform action";
-}
+function ListeningAnimation({ color }: { color: string }) {
+  const r1 = useSharedValue(1);
+  const r1a = useSharedValue(0.55);
+  const r2 = useSharedValue(1);
+  const r2a = useSharedValue(0.55);
+  const r3 = useSharedValue(1);
+  const r3a = useSharedValue(0.55);
 
-// ── sub-components ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const dur = 1700;
+    const cfg = { duration: dur, easing: Easing.out(Easing.quad) };
+    r1.value = withRepeat(withTiming(2.6, cfg), -1, false);
+    r1a.value = withRepeat(withTiming(0, { duration: dur }), -1, false);
+    r2.value = withDelay(567, withRepeat(withTiming(2.6, cfg), -1, false));
+    r2a.value = withDelay(567, withRepeat(withTiming(0, { duration: dur }), -1, false));
+    r3.value = withDelay(1134, withRepeat(withTiming(2.6, cfg), -1, false));
+    r3a.value = withDelay(1134, withRepeat(withTiming(0, { duration: dur }), -1, false));
+    return () => {
+      cancelAnimation(r1); cancelAnimation(r1a);
+      cancelAnimation(r2); cancelAnimation(r2a);
+      cancelAnimation(r3); cancelAnimation(r3a);
+    };
+  }, []);
 
-function TypingIndicator({ assistantInitial, c }: { assistantInitial: string; c: any }) {
-  return (
-    <View style={styles.rowAssistant}>
-      <View style={[styles.avatar, { backgroundColor: c.primary }]}>
-        <Text style={[styles.avatarText, { color: c.primaryForeground }]}>{assistantInitial}</Text>
-      </View>
-      <View style={[styles.bubble, styles.bubbleAssistant, { backgroundColor: c.card, borderColor: c.border }]}>
-        <Text style={[styles.bubbleText, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-          • • •
-        </Text>
-      </View>
-    </View>
-  );
-}
+  const s1 = useAnimatedStyle(() => ({ transform: [{ scale: r1.value }], opacity: r1a.value }));
+  const s2 = useAnimatedStyle(() => ({ transform: [{ scale: r2.value }], opacity: r2a.value }));
+  const s3 = useAnimatedStyle(() => ({ transform: [{ scale: r3.value }], opacity: r3a.value }));
 
-interface BubbleProps {
-  message: PopoMessage;
-  assistantInitial: string;
-  c: any;
-  onYes: (msg: PopoMessage) => void;
-  onNo: (msgId: string) => void;
-}
-
-function MessageBubble({ message, assistantInitial, c, onYes, onNo }: BubbleProps) {
-  const isUser = message.role === "user";
+  const ring = {
+    position: "absolute" as const,
+    width: CORE_SIZE,
+    height: CORE_SIZE,
+    borderRadius: CORE_SIZE / 2,
+    backgroundColor: color,
+  };
 
   return (
-    <View style={[styles.bubbleWrapper, isUser ? styles.rowUser : styles.rowAssistant]}>
-      {!isUser && (
-        <View style={[styles.avatar, { backgroundColor: c.primary }]}>
-          <Text style={[styles.avatarText, { color: c.primaryForeground }]}>{assistantInitial}</Text>
-        </View>
-      )}
-      <View style={styles.bubbleCol}>
-        <View
-          style={[
-            styles.bubble,
-            isUser
-              ? [styles.bubbleUser, { backgroundColor: c.primary }]
-              : [styles.bubbleAssistant, { backgroundColor: c.card, borderColor: c.border }],
-          ]}
-        >
-          <Text
-            style={[
-              styles.bubbleText,
-              {
-                color: isUser ? c.primaryForeground : c.foreground,
-                fontFamily: "Inter_400Regular",
-              },
-            ]}
-          >
-            {message.text}
-          </Text>
-        </View>
-
-        {!isUser && message.action && !message.actionResolved && (
-          <View style={styles.actionArea}>
-            <Text style={[styles.actionLabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-              {actionLabel(message.action)}
-            </Text>
-            <View style={styles.actionBtns}>
-              <TouchableOpacity
-                onPress={() => onYes(message)}
-                activeOpacity={0.8}
-                style={[styles.actionBtn, { backgroundColor: c.primary, borderRadius: c.radius }]}
-              >
-                <Feather name="check" size={14} color={c.primaryForeground} />
-                <Text style={[styles.actionBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
-                  Yes, do it
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => onNo(message.id)}
-                activeOpacity={0.8}
-                style={[styles.actionBtn, { backgroundColor: c.secondary, borderRadius: c.radius }]}
-              >
-                <Feather name="x" size={14} color={c.foreground} />
-                <Text style={[styles.actionBtnText, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
-                  No thanks
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+    <View style={aStyles.listenContainer}>
+      <Animated.View style={[ring, s3]} />
+      <Animated.View style={[ring, s2]} />
+      <Animated.View style={[ring, s1]} />
+      <View style={[aStyles.core, { backgroundColor: color }]}>
+        <Feather name="mic" size={36} color="#fff" />
       </View>
     </View>
   );
 }
+
+function ThinkingAnimation({ color }: { color: string }) {
+  const d1 = useSharedValue(0.5);
+  const d2 = useSharedValue(0.5);
+  const d3 = useSharedValue(0.5);
+
+  useEffect(() => {
+    const makeAnim = (delay: number) =>
+      withDelay(
+        delay,
+        withRepeat(
+          withSequence(
+            withTiming(1.35, { duration: 420, easing: Easing.inOut(Easing.ease) }),
+            withTiming(0.5, { duration: 420, easing: Easing.inOut(Easing.ease) })
+          ),
+          -1,
+          false
+        )
+      );
+    d1.value = makeAnim(0);
+    d2.value = makeAnim(170);
+    d3.value = makeAnim(340);
+    return () => { cancelAnimation(d1); cancelAnimation(d2); cancelAnimation(d3); };
+  }, []);
+
+  const s1 = useAnimatedStyle(() => ({ transform: [{ scale: d1.value }] }));
+  const s2 = useAnimatedStyle(() => ({ transform: [{ scale: d2.value }] }));
+  const s3 = useAnimatedStyle(() => ({ transform: [{ scale: d3.value }] }));
+
+  const dot = { width: 22, height: 22, borderRadius: 11, backgroundColor: color };
+
+  return (
+    <View style={aStyles.thinkContainer}>
+      <Animated.View style={[dot, s1]} />
+      <Animated.View style={[dot, s2]} />
+      <Animated.View style={[dot, s3]} />
+    </View>
+  );
+}
+
+function TalkingAnimation({ color }: { color: string }) {
+  const b1 = useSharedValue(0.12);
+  const b2 = useSharedValue(0.12);
+  const b3 = useSharedValue(0.12);
+  const b4 = useSharedValue(0.12);
+  const b5 = useSharedValue(0.12);
+
+  useEffect(() => {
+    const maxes = [0.8, 0.55, 1.0, 0.65, 0.85];
+    const all = [b1, b2, b3, b4, b5];
+    all.forEach((b, i) => {
+      b.value = withDelay(
+        i * 75,
+        withRepeat(
+          withSequence(
+            withTiming(maxes[i], { duration: 370, easing: Easing.inOut(Easing.ease) }),
+            withTiming(0.12, { duration: 370, easing: Easing.inOut(Easing.ease) })
+          ),
+          -1,
+          false
+        )
+      );
+    });
+    return () => all.forEach((b) => cancelAnimation(b));
+  }, []);
+
+  const bs1 = useAnimatedStyle(() => ({ transform: [{ scaleY: b1.value }] }));
+  const bs2 = useAnimatedStyle(() => ({ transform: [{ scaleY: b2.value }] }));
+  const bs3 = useAnimatedStyle(() => ({ transform: [{ scaleY: b3.value }] }));
+  const bs4 = useAnimatedStyle(() => ({ transform: [{ scaleY: b4.value }] }));
+  const bs5 = useAnimatedStyle(() => ({ transform: [{ scaleY: b5.value }] }));
+
+  const bar = { width: 14, height: 80, borderRadius: 7, backgroundColor: color };
+
+  return (
+    <View style={aStyles.talkContainer}>
+      <Animated.View style={[bar, bs1]} />
+      <Animated.View style={[bar, bs2]} />
+      <Animated.View style={[bar, bs3]} />
+      <Animated.View style={[bar, bs4]} />
+      <Animated.View style={[bar, bs5]} />
+    </View>
+  );
+}
+
+const aStyles = StyleSheet.create({
+  listenContainer: {
+    width: 240,
+    height: 240,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  core: {
+    width: CORE_SIZE,
+    height: CORE_SIZE,
+    borderRadius: CORE_SIZE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  thinkContainer: {
+    width: 240,
+    height: 100,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+  },
+  talkContainer: {
+    width: 240,
+    height: 120,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+});
 
 // ── screen ────────────────────────────────────────────────────────────────────
 
@@ -274,422 +356,362 @@ export default function PopoScreen() {
   const { tasks, addTask, completeTask, deleteTask } = useTasks();
 
   const assistantName = settings.assistantName || "Popo";
-  const userName = settings.userName || "there";
-  const assistantInitial = assistantName.charAt(0).toUpperCase();
+  const userName = settings.userName || "";
 
-  const [messages, setMessages] = useState<PopoMessage[]>(() => [
-    {
-      id: "init",
-      role: "assistant",
-      text: `Hi${userName !== "there" ? `, ${userName}` : ""}! I'm ${assistantName}. I can help you review your tasks, add new ones, or chat about your day. What's on your mind?`,
-      actionResolved: true,
-    },
-  ]);
-  const [inputText, setInputText] = useState("");
+  const [popoState, setPopoState] = useState<PopoState>("idle");
+  const [lastResponse, setLastResponse] = useState("");
   const [liveTranscript, setLiveTranscript] = useState("");
-  const [isListening, setIsListening] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [pendingAction, setPendingAction] = useState<PopoAction | null>(null);
 
-  const listRef = useRef<FlatList>(null);
-  const transcriptRef = useRef("");
+  const isMountedRef = useRef(true);
   const isListeningRef = useRef(false);
+  const historyRef = useRef<ChatMessage[]>([]);
+  const pendingActionRef = useRef<PopoAction | null>(null);
+  const transcriptRef = useRef("");
+  const settingsRef = useRef(settings);
+  const tasksRef = useRef(tasks);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── speech recognition events ──
+  settingsRef.current = settings;
+  tasksRef.current = tasks;
 
-  useSpeechRecognitionEvent("result", (event) => {
-    const text = event.results?.[0]?.transcript ?? "";
-    setLiveTranscript(text);
+  // ── mount / unmount ───────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const greeting = randomGreeting(userName);
+    speakText(greeting);
+    return () => {
+      isMountedRef.current = false;
+      clearSilenceTimer();
+      Speech.stop();
+      if (isListeningRef.current) {
+        ExpoSpeechRecognitionModule.abort();
+        isListeningRef.current = false;
+      }
+    };
+  }, []);
+
+  // ── speech recognition events ─────────────────────────────────────────────
+
+  useSpeechRecognitionEvent("result", (evt) => {
+    const text = evt.results[0]?.transcript ?? "";
     transcriptRef.current = text;
+    setLiveTranscript(text);
+    if (text.length > 0) startSilenceTimer(); // reset timer as speech comes in
   });
 
   useSpeechRecognitionEvent("end", () => {
     if (!isListeningRef.current) return;
     isListeningRef.current = false;
-    setIsListening(false);
+    clearSilenceTimer();
     setLiveTranscript("");
     const text = transcriptRef.current.trim();
-    if (text) sendMessage(text);
     transcriptRef.current = "";
+
+    if (!text) {
+      if (isMountedRef.current) setPopoState("idle");
+      return;
+    }
+
+    if (pendingActionRef.current) {
+      if (isAffirmative(text)) {
+        executeAction(pendingActionRef.current);
+        return;
+      }
+      if (isNegative(text)) {
+        pendingActionRef.current = null;
+        setPendingAction(null);
+        speakText("Okay, I won't do that.");
+        return;
+      }
+    }
+
+    sendToAI(text);
   });
 
   useSpeechRecognitionEvent("error", () => {
     isListeningRef.current = false;
-    setIsListening(false);
+    clearSilenceTimer();
     setLiveTranscript("");
     transcriptRef.current = "";
+    if (isMountedRef.current) setPopoState("idle");
   });
 
-  // ── scroll to bottom after new messages ──
+  // ── silence timer ─────────────────────────────────────────────────────────
 
-  function scrollToEnd() {
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
+  function clearSilenceTimer() {
+    if (silenceTimerRef.current !== null) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
   }
 
-  // ── voice ──
+  function startSilenceTimer() {
+    clearSilenceTimer();
+    silenceTimerRef.current = setTimeout(handleSilenceTimeout, 5000);
+  }
 
-  async function startListening() {
-    if (Platform.OS === "web") {
-      Alert.alert("Voice input is not available on web.");
-      return;
+  function handleSilenceTimeout() {
+    if (!isMountedRef.current) return;
+    if (isListeningRef.current) {
+      ExpoSpeechRecognitionModule.abort();
+      isListeningRef.current = false;
     }
-    const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!granted) {
-      Alert.alert(
-        "Microphone permission required",
-        "Please allow microphone access in Settings to use voice input."
-      );
-      return;
-    }
+    const goodbyes = [
+      "Alright, let me know if you need anything!",
+      "Got it, talk soon!",
+      "Okay, I'm here if you need me!",
+    ];
+    const farewell = goodbyes[Math.floor(Math.random() * goodbyes.length)];
+    speakText(farewell, handleClose);
+  }
+
+  // ── core functions ────────────────────────────────────────────────────────
+
+  function speakText(text: string, onDone?: () => void) {
+    clearSilenceTimer();
+    setPopoState("talking");
+    setLastResponse(text);
+    Speech.speak(text, {
+      language: "en-US",
+      onDone: () => {
+        if (!isMountedRef.current) return;
+        if (onDone) onDone();
+        else beginListening();
+      },
+      onError: () => { if (isMountedRef.current) setPopoState("idle"); },
+    });
+  }
+
+  function beginListening() {
+    if (!isMountedRef.current) return;
+    setPopoState("listening");
     transcriptRef.current = "";
     setLiveTranscript("");
-    isListeningRef.current = true;
-    setIsListening(true);
-    ExpoSpeechRecognitionModule.start({ lang: "en-US", interimResults: true });
+    ExpoSpeechRecognitionModule.requestPermissionsAsync().then(({ granted }) => {
+      if (!granted || !isMountedRef.current) {
+        setPopoState("idle");
+        return;
+      }
+      isListeningRef.current = true;
+      ExpoSpeechRecognitionModule.start({ lang: "en-US", interimResults: true, continuous: false });
+      startSilenceTimer();
+    });
   }
 
   function stopListening() {
+    clearSilenceTimer();
     ExpoSpeechRecognitionModule.stop();
   }
 
-  // ── send message ──
+  function interruptTTS() {
+    Speech.stop();
+    if (isMountedRef.current) beginListening();
+  }
 
-  const sendMessage = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || isLoading) return;
+  function handleClose() {
+    clearSilenceTimer();
+    Speech.stop();
+    if (isListeningRef.current) {
+      ExpoSpeechRecognitionModule.abort();
+      isListeningRef.current = false;
+    }
+    router.back();
+  }
 
-      await Speech.stop();
+  function dismissAction(speak: boolean) {
+    pendingActionRef.current = null;
+    setPendingAction(null);
+    Speech.stop();
+    if (isListeningRef.current) {
+      ExpoSpeechRecognitionModule.abort();
+      isListeningRef.current = false;
+    }
+    if (speak) speakText("Okay, I won't do that.");
+  }
 
-      const userMsg: PopoMessage = {
-        id: makeId(),
-        role: "user",
-        text: trimmed,
-        actionResolved: true,
-      };
+  // ── AI ────────────────────────────────────────────────────────────────────
 
-      setMessages((prev) => {
-        const next = [...prev, userMsg];
-        return next;
-      });
-      setInputText("");
-      setIsLoading(true);
-      scrollToEnd();
+  async function sendToAI(text: string) {
+    setPopoState("thinking");
+    historyRef.current.push({ role: "user", content: text });
 
-      try {
-        const provider: AIProvider = settings.aiProvider ?? "claude";
-        const apiKey = await SecureStore.getItemAsync(secureKey(provider));
+    const s = settingsRef.current;
+    const provider: AIProvider = s.aiProvider ?? "claude";
+    const apiKey = await SecureStore.getItemAsync(secureKey(provider));
 
-        if (!apiKey) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: makeId(),
-              role: "assistant",
-              text: "You haven't set up an AI provider yet. Go to Settings → AI Assistant to add an API key.",
-              actionResolved: true,
-            },
-          ]);
-          scrollToEnd();
-          return;
-        }
-
-        const model = settings.aiModel ?? DEFAULT_MODEL[provider];
-        const systemPrompt = buildSystemPrompt(tasks, settings);
-
-        const history: ChatMessage[] = [...messages, userMsg].map((m) => ({
-          role: m.role,
-          content: m.text,
-        }));
-
-        const raw = await callAI(provider, apiKey, model, systemPrompt, history);
-        const { displayText, action } = parseAction(raw);
-
-        const assistantMsg: PopoMessage = {
-          id: makeId(),
-          role: "assistant",
-          text: displayText || raw.trim(),
-          action: action ?? undefined,
-          actionResolved: !action,
-        };
-
-        setMessages((prev) => [...prev, assistantMsg]);
-        scrollToEnd();
-
-        if (ttsEnabled && displayText) {
-          Speech.speak(displayText, { language: "en-US" });
-        }
-      } catch (e: any) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: makeId(),
-            role: "assistant",
-            text: `Something went wrong: ${e?.message ?? "Please try again."}`,
-            actionResolved: true,
-          },
-        ]);
-        scrollToEnd();
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [isLoading, messages, settings, tasks, ttsEnabled]
-  );
-
-  // ── action handlers ──
-
-  async function handleYes(msg: PopoMessage) {
-    if (!msg.action) return;
-    setMessages((prev) =>
-      prev.map((m) => (m.id === msg.id ? { ...m, actionResolved: true } : m))
-    );
+    if (!apiKey) {
+      const msg =
+        "I don't have an API key set up yet. Please visit Settings and add one for your chosen AI provider.";
+      historyRef.current.push({ role: "assistant", content: msg });
+      if (isMountedRef.current) speakText(msg);
+      return;
+    }
 
     try {
-      if (msg.action.type === "add_task") {
-        const now = new Date();
-        const targetDate =
-          msg.action.targetDate || new Date(now.getTime() + 3600_000).toISOString();
-        const hardDeadline =
-          msg.action.hardDeadline || new Date(now.getTime() + 10_800_000).toISOString();
-        await addTask({
-          description: msg.action.description,
-          detail: msg.action.detail,
-          targetDate,
-          hardDeadline,
-          isImportant: msg.action.isImportant ?? false,
-        });
-        const confirm: PopoMessage = {
-          id: makeId(),
-          role: "assistant",
-          text: `Done! "${msg.action.description}" has been added to your tasks.`,
-          actionResolved: true,
-        };
-        setMessages((prev) => [...prev, confirm]);
-        if (ttsEnabled) Speech.speak(confirm.text, { language: "en-US" });
-      } else if (msg.action.type === "complete_task") {
-        const target = resolveTask(tasks, msg.action.description);
-        if (!target) throw new Error(`Couldn't find task "${msg.action.description}"`);
-        await completeTask(target.id);
-        const confirm: PopoMessage = {
-          id: makeId(),
-          role: "assistant",
-          text: `Done! I've marked "${target.description}" as complete.`,
-          actionResolved: true,
-        };
-        setMessages((prev) => [...prev, confirm]);
-        if (ttsEnabled) Speech.speak(confirm.text, { language: "en-US" });
-      } else if (msg.action.type === "delete_task") {
-        const target = resolveTask(tasks, msg.action.description);
-        if (!target) throw new Error(`Couldn't find task "${msg.action.description}"`);
-        await deleteTask(target.id);
-        const confirm: PopoMessage = {
-          id: makeId(),
-          role: "assistant",
-          text: `Done! I've deleted "${target.description}".`,
-          actionResolved: true,
-        };
-        setMessages((prev) => [...prev, confirm]);
-        if (ttsEnabled) Speech.speak(confirm.text, { language: "en-US" });
+      const model = s.aiModel ?? DEFAULT_MODEL[provider];
+      const systemPrompt = buildSystemPrompt(tasksRef.current, s);
+      const raw = await callAI(provider, apiKey, model, systemPrompt, historyRef.current);
+
+      if (!isMountedRef.current) return;
+
+      const { displayText, action } = parseAction(raw);
+      const responseText = displayText || raw.trim();
+      historyRef.current.push({ role: "assistant", content: responseText });
+
+      if (action) {
+        pendingActionRef.current = action;
+        setPendingAction(action);
+      } else {
+        pendingActionRef.current = null;
+        setPendingAction(null);
       }
-      scrollToEnd();
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: makeId(),
-          role: "assistant",
-          text: "Sorry, I couldn't complete that action. Please try again.",
-          actionResolved: true,
-        },
-      ]);
-      scrollToEnd();
+
+      speakText(responseText);
+    } catch (e: any) {
+      if (!isMountedRef.current) return;
+      const msg = e?.message
+        ? `Sorry, something went wrong: ${e.message}`
+        : "Sorry, something went wrong. Please try again.";
+      speakText(msg);
     }
   }
 
-  function handleNo(msgId: string) {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, actionResolved: true } : m))
-    );
+  async function executeAction(action: PopoAction) {
+    pendingActionRef.current = null;
+    setPendingAction(null);
+    setPopoState("thinking");
+
+    try {
+      if (action.type === "add_task") {
+        const now = new Date();
+        await addTask({
+          description: action.description,
+          detail: action.detail,
+          targetDate: action.targetDate || new Date(now.getTime() + 3_600_000).toISOString(),
+          hardDeadline: action.hardDeadline || new Date(now.getTime() + 10_800_000).toISOString(),
+          isImportant: action.isImportant ?? false,
+        });
+        speakText(`Done! I've added "${action.description}" to your tasks.`);
+      } else if (action.type === "complete_task") {
+        const target = resolveTask(tasksRef.current, action.description);
+        if (!target) throw new Error("Task not found");
+        await completeTask(target.id);
+        speakText(`Done! "${target.description}" is marked complete.`);
+      } else if (action.type === "delete_task") {
+        const target = resolveTask(tasksRef.current, action.description);
+        if (!target) throw new Error("Task not found");
+        await deleteTask(target.id);
+        speakText(`Deleted "${target.description}".`);
+      }
+    } catch {
+      if (isMountedRef.current) speakText("Sorry, I couldn't complete that action. Please try again.");
+    }
   }
 
-  // ── render ──
+  // ── render ────────────────────────────────────────────────────────────────
 
-  const topInset = Platform.OS === "ios" ? insets.top : insets.top + 8;
-  const bottomInset = insets.bottom;
+  const stateLabel =
+    popoState === "listening"
+      ? "Listening..."
+      : popoState === "thinking"
+      ? "Thinking..."
+      : popoState === "talking"
+      ? assistantName
+      : "Tap to speak";
 
-  const displayedMessages = [...messages, ...(isLoading ? [{ id: "__typing__" } as any] : [])];
+  const showTranscript = popoState === "listening" && liveTranscript.length > 0;
 
   return (
     <View style={[styles.container, { backgroundColor: c.background }]}>
       {/* Header */}
-      <View
-        style={[
-          styles.header,
-          {
-            paddingTop: topInset + 12,
-            backgroundColor: c.background,
-            borderBottomColor: c.border,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          onPress={() => {
-            Speech.stop();
-            router.back();
-          }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={[styles.headerBtn, { backgroundColor: c.secondary, borderRadius: 20 }]}
-        >
-          <Feather name="arrow-left" size={18} color={c.foreground} />
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+        <TouchableOpacity onPress={handleClose} style={styles.headerBtn} hitSlop={8}>
+          <Feather name="x" size={22} color={c.foreground} />
         </TouchableOpacity>
-
-        <View style={styles.headerCenter}>
-          <Text style={[styles.headerTitle, { color: c.foreground, fontFamily: "Inter_700Bold" }]}>
-            {assistantName}
-          </Text>
-          <Text style={[styles.headerSub, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
-            AI assistant
-          </Text>
-        </View>
-
-        <TouchableOpacity
-          onPress={() => {
-            const next = !ttsEnabled;
-            setTtsEnabled(next);
-            if (!next) Speech.stop();
-          }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={[
-            styles.headerBtn,
-            { backgroundColor: ttsEnabled ? c.primary + "18" : c.secondary, borderRadius: 20 },
-          ]}
-        >
-          <Feather name={ttsEnabled ? "volume-2" : "volume-x"} size={18} color={ttsEnabled ? c.primary : c.mutedForeground} />
-        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: c.foreground, fontFamily: "Inter_600SemiBold" }]}>
+          {assistantName}
+        </Text>
+        <View style={styles.headerBtn} />
       </View>
 
-      {/* Message list */}
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
-      >
-        <FlatList
-          ref={listRef}
-          data={displayedMessages}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={[styles.listContent, { paddingBottom: 16 }]}
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={scrollToEnd}
-          renderItem={({ item }) => {
-            if (item.id === "__typing__") {
-              return <TypingIndicator assistantInitial={assistantInitial} c={c} />;
-            }
-            const msg = item as PopoMessage;
-            return (
-              <MessageBubble
-                message={msg}
-                assistantInitial={assistantInitial}
-                c={c}
-                onYes={handleYes}
-                onNo={handleNo}
-              />
-            );
-          }}
-        />
+      {/* Center */}
+      <View style={styles.center}>
+        <Text style={[styles.stateLabel, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+          {stateLabel}
+        </Text>
 
-        {/* Input bar */}
-        <View
+        {/* Animation */}
+        <View style={styles.animWrapper}>
+          {popoState === "listening" && (
+            <TouchableOpacity onPress={stopListening} activeOpacity={1}>
+              <ListeningAnimation color={c.primary} />
+            </TouchableOpacity>
+          )}
+          {popoState === "thinking" && <ThinkingAnimation color={c.primary} />}
+          {popoState === "talking" && (
+            <TouchableOpacity onPress={interruptTTS} activeOpacity={1}>
+              <TalkingAnimation color={c.primary} />
+            </TouchableOpacity>
+          )}
+          {popoState === "idle" && (
+            <TouchableOpacity
+              onPress={beginListening}
+              activeOpacity={0.82}
+              style={[styles.idleButton, { backgroundColor: c.primary }]}
+            >
+              <Feather name="mic" size={44} color={c.primaryForeground} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Transcript / response text */}
+        <Text
           style={[
-            styles.inputBar,
+            styles.responseText,
             {
-              backgroundColor: c.card,
-              borderTopColor: c.border,
-              paddingBottom: bottomInset + 8,
+              color: showTranscript ? c.foreground : c.mutedForeground,
+              fontFamily: "Inter_400Regular",
             },
           ]}
+          numberOfLines={4}
         >
-          {isListening && liveTranscript ? (
-            <Text
-              style={[styles.liveTranscript, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}
-              numberOfLines={2}
-            >
-              {liveTranscript}
-            </Text>
-          ) : null}
+          {showTranscript ? liveTranscript : lastResponse}
+        </Text>
+      </View>
 
-          <View style={styles.inputRow}>
-            {/* Mic button */}
+      {/* Pending action */}
+      {pendingAction && (
+        <View style={[styles.actionArea, { borderTopColor: c.border }]}>
+          <Text style={[styles.actionCaption, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+            {actionLabel(pendingAction)}
+          </Text>
+          <View style={styles.actionRow}>
             <TouchableOpacity
-              onPress={isListening ? stopListening : startListening}
-              disabled={isLoading}
+              onPress={() => executeAction(pendingAction)}
+              style={[styles.actionBtn, { backgroundColor: c.primary, borderRadius: 14 }]}
               activeOpacity={0.8}
-              style={[
-                styles.micBtn,
-                {
-                  backgroundColor: isListening ? c.destructive : c.secondary,
-                  borderRadius: 20,
-                  opacity: isLoading ? 0.5 : 1,
-                },
-              ]}
             >
-              <Feather
-                name={isListening ? "square" : "mic"}
-                size={18}
-                color={isListening ? "#fff" : c.foreground}
-              />
+              <Feather name="check" size={16} color={c.primaryForeground} />
+              <Text style={[styles.actionBtnText, { color: c.primaryForeground, fontFamily: "Inter_600SemiBold" }]}>
+                Yes, do it
+              </Text>
             </TouchableOpacity>
-
-            {/* Text input */}
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  color: c.foreground,
-                  backgroundColor: c.secondary,
-                  borderRadius: 20,
-                  fontFamily: "Inter_400Regular",
-                },
-              ]}
-              value={isListening ? liveTranscript : inputText}
-              onChangeText={isListening ? undefined : setInputText}
-              editable={!isListening && !isLoading}
-              placeholder={isListening ? "Listening…" : "Message…"}
-              placeholderTextColor={c.mutedForeground}
-              returnKeyType="send"
-              onSubmitEditing={() => sendMessage(inputText)}
-              multiline
-              maxLength={500}
-            />
-
-            {/* Send button */}
             <TouchableOpacity
-              onPress={() => sendMessage(inputText)}
-              disabled={!inputText.trim() || isLoading || isListening}
+              onPress={() => dismissAction(true)}
+              style={[styles.actionBtn, { backgroundColor: c.secondary, borderRadius: 14 }]}
               activeOpacity={0.8}
-              style={[
-                styles.sendBtn,
-                {
-                  backgroundColor:
-                    inputText.trim() && !isLoading && !isListening ? c.primary : c.secondary,
-                  borderRadius: 20,
-                },
-              ]}
             >
-              <Feather
-                name="send"
-                size={18}
-                color={
-                  inputText.trim() && !isLoading && !isListening
-                    ? c.primaryForeground
-                    : c.mutedForeground
-                }
-              />
+              <Feather name="x" size={16} color={c.foreground} />
+              <Text style={[styles.actionBtnText, { color: c.foreground, fontFamily: "Inter_500Medium" }]}>
+                No thanks
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      )}
+
+      <View style={{ height: insets.bottom + 20 }} />
     </View>
   );
 }
@@ -697,84 +719,80 @@ export default function PopoScreen() {
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  flex: { flex: 1 },
+  container: {
+    flex: 1,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerBtn: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
-  headerCenter: { alignItems: "center", gap: 1 },
-  headerTitle: { fontSize: 17 },
-  headerSub: { fontSize: 11 },
-  listContent: { paddingTop: 16, paddingHorizontal: 16 },
-  // bubbles
-  bubbleWrapper: { marginBottom: 12 },
-  rowUser: { flexDirection: "row", justifyContent: "flex-end" },
-  rowAssistant: { flexDirection: "row", justifyContent: "flex-start", gap: 8 },
-  bubbleCol: { flex: 1, maxWidth: "80%" },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  headerBtn: {
+    width: 40,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
-    alignSelf: "flex-end",
-    marginBottom: 2,
   },
-  avatarText: { fontSize: 13, fontWeight: "700" },
-  bubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
+  headerTitle: {
+    fontSize: 17,
+    letterSpacing: 0.2,
   },
-  bubbleUser: {
-    borderBottomRightRadius: 4,
-    alignSelf: "flex-end",
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    gap: 24,
   },
-  bubbleAssistant: {
-    borderBottomLeftRadius: 4,
-    borderWidth: 1,
-    alignSelf: "flex-start",
+  stateLabel: {
+    fontSize: 15,
+    letterSpacing: 0.3,
   },
-  bubbleText: { fontSize: 15, lineHeight: 22 },
-  // action buttons
-  actionArea: { marginTop: 6, gap: 6 },
-  actionLabel: { fontSize: 12, paddingHorizontal: 2 },
-  actionBtns: { flexDirection: "row", gap: 8 },
+  animWrapper: {
+    width: 240,
+    height: 240,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  idleButton: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  responseText: {
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: "center",
+    opacity: 0.85,
+  },
+  actionArea: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+  },
+  actionCaption: {
+    fontSize: 13,
+    textAlign: "center",
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "center",
+  },
   actionBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
   },
-  actionBtnText: { fontSize: 13 },
-  // input bar
-  inputBar: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 10,
-    paddingHorizontal: 12,
-  },
-  liveTranscript: {
-    fontSize: 13,
-    lineHeight: 18,
-    paddingHorizontal: 6,
-    paddingBottom: 6,
-    fontStyle: "italic",
-  },
-  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
-  micBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  input: {
-    flex: 1,
+  actionBtnText: {
     fontSize: 15,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    maxHeight: 100,
   },
-  sendBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
 });
