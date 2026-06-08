@@ -3,7 +3,7 @@ export interface NotificationTime {
   minute: number;
 }
 
-export type AIProvider = "claude" | "openai" | "gemini";
+export type AIProvider = "claude" | "openai" | "gemini" | "openrouter";
 
 export interface AppSettings {
   morningNotification: NotificationTime;

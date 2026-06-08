@@ -37,8 +37,8 @@ type AddTaskAction = {
   isImportant?: boolean;
   detail?: string;
 };
-type CompleteTaskAction = { type: "complete_task"; id: string };
-type DeleteTaskAction = { type: "delete_task"; id: string };
+type CompleteTaskAction = { type: "complete_task"; description: string };
+type DeleteTaskAction = { type: "delete_task"; description: string };
 type PopoAction = AddTaskAction | CompleteTaskAction | DeleteTaskAction;
 
 interface PopoMessage {
@@ -89,56 +89,88 @@ function buildSystemPrompt(tasks: Task[], settings: AppSettings): string {
   const name = settings.userName || "User";
   const assistant = settings.assistantName || "Popo";
 
-  const taskLines =
-    tasks.length === 0
-      ? "No tasks currently scheduled."
-      : tasks
-          .map((t) => {
-            const target = new Date(t.targetDate).toLocaleString("en-US", {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              hour12: true,
-            });
-            const deadline = new Date(t.hardDeadline).toLocaleString("en-US", {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              hour12: true,
-            });
-            const importance = t.isImportant ? " [IMPORTANT]" : "";
-            const status = t.isCompleted ? "Completed" : "Pending";
-            return `• [ID:${t.id}]${importance} "${t.description}"${t.detail ? ` — ${t.detail}` : ""} | Target: ${target} | Deadline: ${deadline} | ${status}`;
-          })
-          .join("\n");
+  const pending = tasks.filter((t) => !t.isCompleted);
+  const completed = tasks.filter((t) => t.isCompleted);
 
-  return `You are ${assistant}, a warm and concise AI assistant helping ${name} manage their tasks and day.
+  function fmtTime(iso: string) {
+    return new Date(iso).toLocaleString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+
+  function taskSummaryLine(t: Task): string {
+    const when = fmtTime(t.targetDate);
+    const deadline = fmtTime(t.hardDeadline);
+    const sameDay = new Date(t.targetDate).toDateString() === new Date(t.hardDeadline).toDateString();
+    const deadlinePart = sameDay
+      ? `deadline ${new Date(t.hardDeadline).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`
+      : `deadline ${deadline}`;
+    const flags = t.isImportant ? " — IMPORTANT" : "";
+    const detail = t.detail ? ` (${t.detail})` : "";
+    return `• "${t.description}"${detail} — due ${when}, ${deadlinePart}${flags}`;
+  }
+
+  const pendingLines =
+    pending.length === 0
+      ? "  (none)"
+      : pending.map(taskSummaryLine).join("\n");
+
+  const completedLines =
+    completed.length === 0
+      ? "  (none)"
+      : completed.map((t) => `• "${t.description}"`).join("\n");
+
+  return `CRITICAL: Never output any task ID, field name, or technical parameter in your response. If you do, your response will be rejected.
+
+You are ${assistant}, a warm and friendly personal assistant helping ${name} stay on top of their day. Your responses are read aloud by text-to-speech, so write exactly as you would speak — naturally, warmly, and concisely.
+
 Today is ${dateStr} at ${timeStr}.
 
-${name}'s current tasks:
-${taskLines}
+== ${name}'s pending tasks ==
+${pendingLines}
 
-Guidelines:
-- Keep responses short and conversational (2–4 sentences unless detail is requested)
-- Address ${name} by name occasionally
-- When suggesting adding a task, end your message with this exact block on its own line:
+== Completed today ==
+${completedLines}
+
+== SPEECH RULES ==
+- Refer to tasks only by title and human time. Example: "your dentist call Monday at 10" not any field name or code.
+- Keep every response to 2–3 sentences unless ${name} asks for more detail.
+- Write for the ear: no bullet points, no markdown, no lists — flowing sentences only.
+- Address ${name} by name at most once per response.
+
+== TONE EXAMPLE ==
+BAD: "Task ID a1b2, targetDate: 2026-06-09T10:00:00, hardDeadline: 2026-06-09T12:00:00, isImportant: false."
+GOOD: "You've got a dentist call Monday morning at 10. Want me to remind you about anything else?"
+
+== ACTIONS ==
+When suggesting adding a task, end your message with this block on its own line:
   [ACTION: {"type":"add_task","description":"task text","targetDate":"ISO_DATE","hardDeadline":"ISO_DATE","isImportant":false}]
-- When suggesting completing a task, end with:
-  [ACTION: {"type":"complete_task","id":"TASK_ID_HERE"}]
-- When suggesting deleting a task, end with:
-  [ACTION: {"type":"delete_task","id":"TASK_ID_HERE"}]
-- ISO_DATE format example: 2026-06-08T18:00:00.000Z
-- Do not mention or explain the ACTION syntax to the user`;
+When suggesting completing a task, end with:
+  [ACTION: {"type":"complete_task","description":"exact task title here"}]
+When suggesting deleting a task, end with:
+  [ACTION: {"type":"delete_task","description":"exact task title here"}]
+ISO_DATE format: 2026-06-08T18:00:00.000Z
+Never show ACTION blocks to ${name} and never put an ID anywhere in your response.`;
+}
+
+function resolveTask(tasks: Task[], description: string): Task | undefined {
+  const needle = description.toLowerCase().trim();
+  return (
+    tasks.find((t) => t.description.toLowerCase() === needle) ??
+    tasks.find((t) => t.description.toLowerCase().includes(needle)) ??
+    tasks.find((t) => needle.includes(t.description.toLowerCase()))
+  );
 }
 
 function actionLabel(action: PopoAction): string {
   if (action.type === "add_task") return `Add: "${action.description}"`;
-  if (action.type === "complete_task") return "Mark task complete";
-  if (action.type === "delete_task") return "Delete task";
+  if (action.type === "complete_task") return `Complete: "${action.description}"`;
+  if (action.type === "delete_task") return `Delete: "${action.description}"`;
   return "Perform action";
 }
 
@@ -436,21 +468,25 @@ export default function PopoScreen() {
         setMessages((prev) => [...prev, confirm]);
         if (ttsEnabled) Speech.speak(confirm.text, { language: "en-US" });
       } else if (msg.action.type === "complete_task") {
-        await completeTask(msg.action.id);
+        const target = resolveTask(tasks, msg.action.description);
+        if (!target) throw new Error(`Couldn't find task "${msg.action.description}"`);
+        await completeTask(target.id);
         const confirm: PopoMessage = {
           id: makeId(),
           role: "assistant",
-          text: "Task marked as complete!",
+          text: `Done! I've marked "${target.description}" as complete.`,
           actionResolved: true,
         };
         setMessages((prev) => [...prev, confirm]);
         if (ttsEnabled) Speech.speak(confirm.text, { language: "en-US" });
       } else if (msg.action.type === "delete_task") {
-        await deleteTask(msg.action.id);
+        const target = resolveTask(tasks, msg.action.description);
+        if (!target) throw new Error(`Couldn't find task "${msg.action.description}"`);
+        await deleteTask(target.id);
         const confirm: PopoMessage = {
           id: makeId(),
           role: "assistant",
-          text: "Task deleted.",
+          text: `Done! I've deleted "${target.description}".`,
           actionResolved: true,
         };
         setMessages((prev) => [...prev, confirm]);

@@ -639,15 +639,16 @@ export default function SettingsScreen() {
             </View>
           </View>
           <View style={styles.chipRow}>
-            {(["claude", "openai", "gemini"] as AIProvider[]).map((p) => {
+            {(["claude", "openai", "gemini", "openrouter"] as AIProvider[]).map((p) => {
               const active = activeProvider === p;
-              const label = p === "claude" ? "Claude" : p === "openai" ? "OpenAI" : "Gemini";
+              const label =
+                p === "claude" ? "Claude" :
+                p === "openai" ? "OpenAI" :
+                p === "gemini" ? "Gemini" : "OpenRouter";
               return (
                 <TouchableOpacity
                   key={p}
-                  onPress={() => {
-                    updateSettings({ aiProvider: p, aiModel: DEFAULT_MODEL[p] });
-                  }}
+                  onPress={() => updateSettings({ aiProvider: p, aiModel: DEFAULT_MODEL[p] })}
                   style={[
                     styles.chip,
                     { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 },
@@ -760,7 +761,7 @@ export default function SettingsScreen() {
                   onPress={() => updateSettings({ aiModel: m.id })}
                   style={[
                     styles.chip,
-                    { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14 },
+                    { backgroundColor: active ? c.primary : c.secondary, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 5 },
                   ]}
                   activeOpacity={0.8}
                 >
@@ -772,11 +773,24 @@ export default function SettingsScreen() {
                   >
                     {m.label}
                   </Text>
+                  {m.free && (
+                    <View style={[styles.freeBadge, { backgroundColor: active ? "rgba(255,255,255,0.25)" : c.primary + "22" }]}>
+                      <Text style={[styles.freeBadgeText, { color: active ? c.primaryForeground : c.primary, fontFamily: "Inter_600SemiBold" }]}>
+                        FREE
+                      </Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               );
             })}
           </View>
         </View>
+
+        {activeProvider === "openrouter" && (
+          <Text style={[styles.aiProviderNote, { color: c.mutedForeground, fontFamily: "Inter_400Regular" }]}>
+            Get a free API key at openrouter.ai — free models have no cost, paid models are billed per token.
+          </Text>
+        )}
 
         {/* ── Google Drive Backup ── */}
         <Text
@@ -983,6 +997,9 @@ const styles = StyleSheet.create({
   },
   chip: { paddingHorizontal: 12, paddingVertical: 6 },
   chipText: { fontSize: 12 },
+  freeBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 6 },
+  freeBadgeText: { fontSize: 9, letterSpacing: 0.4 },
+  aiProviderNote: { fontSize: 12, lineHeight: 17, marginTop: 6, paddingHorizontal: 2 },
   debugBtn: {
     flexDirection: "row",
     alignItems: "center",

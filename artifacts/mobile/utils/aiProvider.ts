@@ -7,7 +7,7 @@ export interface ChatMessage {
   content: string;
 }
 
-export const PROVIDER_MODELS: Record<AIProvider, Array<{ id: string; label: string }>> = {
+export const PROVIDER_MODELS: Record<AIProvider, Array<{ id: string; label: string; free?: boolean }>> = {
   claude: [
     { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 (Fast)" },
     { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
@@ -23,12 +23,21 @@ export const PROVIDER_MODELS: Record<AIProvider, Array<{ id: string; label: stri
     { id: "gemini-1.5-pro", label: "1.5 Pro" },
     { id: "gemini-2.5-pro", label: "2.5 Pro" },
   ],
+  openrouter: [
+    { id: "openrouter/auto", label: "Auto (recommended)" },
+    { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
+    { id: "openai/gpt-4o", label: "GPT-4o" },
+    { id: "google/gemini-flash-1.5", label: "Gemini Flash 1.5" },
+    { id: "meta-llama/llama-3.1-8b-instruct:free", label: "Llama 3.1 8B", free: true },
+    { id: "mistralai/mistral-7b-instruct:free", label: "Mistral 7B", free: true },
+  ],
 };
 
 export const DEFAULT_MODEL: Record<AIProvider, string> = {
   claude: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
   gemini: "gemini-2.0-flash",
+  openrouter: "openrouter/auto",
 };
 
 export async function callAI(
@@ -45,6 +54,8 @@ export async function callAI(
       return callOpenAI(apiKey, model, systemPrompt, messages);
     case "gemini":
       return callGemini(apiKey, model, systemPrompt, messages);
+    case "openrouter":
+      return callOpenRouter(apiKey, model, systemPrompt, messages);
   }
 }
 
@@ -91,6 +102,31 @@ async function callOpenAI(
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as any;
     throw new Error(err?.error?.message ?? `OpenAI error ${res.status}`);
+  }
+  const data = await res.json() as any;
+  return data.choices[0].message.content as string;
+}
+
+async function callOpenRouter(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  messages: ChatMessage[]
+): Promise<string> {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as any;
+    throw new Error(err?.error?.message ?? `OpenRouter error ${res.status}`);
   }
   const data = await res.json() as any;
   return data.choices[0].message.content as string;
